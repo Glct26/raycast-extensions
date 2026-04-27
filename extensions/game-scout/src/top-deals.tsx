@@ -103,24 +103,25 @@ export default function TopDeals() {
       }
 
       try {
-const response = await fetch(
-  `https://www.cheapshark.com/api/1.0/deals?upperPrice=${maxPrice}&onSale=1&sortBy=Deal%20Rating`
-);
+        const response = await fetch(
+          `https://www.cheapshark.com/api/1.0/deals?upperPrice=${maxPrice}&onSale=1&sortBy=Deal%20Rating`,
+        );
         const data = await response.json();
-data.sort((a: any, b: any) => {
-  const ratingDiff = parseFloat(b.dealRating) - parseFloat(a.dealRating);
-  if (ratingDiff !== 0) return ratingDiff;
-  const savingsDiff = parseFloat(b.savings) - parseFloat(a.savings);
-  if (savingsDiff !== 0) return savingsDiff;
-  return parseFloat(b.salePrice) - parseFloat(a.salePrice);
-});
+        data.sort((a: any, b: any) => {
+          const ratingDiff =
+            parseFloat(b.dealRating) - parseFloat(a.dealRating);
+          if (ratingDiff !== 0) return ratingDiff;
+          const savingsDiff = parseFloat(b.savings) - parseFloat(a.savings);
+          if (savingsDiff !== 0) return savingsDiff;
+          return parseFloat(b.salePrice) - parseFloat(a.salePrice);
+        });
         const filteredByDiscount = data.filter(
-          (deal: any) => parseFloat(deal.savings) >= parseFloat(minDiscount)
+          (deal: any) => parseFloat(deal.savings) >= parseFloat(minDiscount),
         );
 
         cache.set(
           cacheKey,
-          JSON.stringify({ timestamp: Date.now(), deals: filteredByDiscount })
+          JSON.stringify({ timestamp: Date.now(), deals: filteredByDiscount }),
         );
         setDeals(filteredByDiscount);
       } catch (error) {
@@ -131,7 +132,7 @@ data.sort((a: any, b: any) => {
     };
 
     fetchDeals();
-}, [minDiscount, maxPrice]);
+  }, [minDiscount, maxPrice]);
 
   const filteredDeals = deals.filter((deal: any) => {
     if (selectedStores === null) return false;
@@ -141,7 +142,10 @@ data.sort((a: any, b: any) => {
   });
 
   return (
-    <List isLoading={isLoading || selectedStores === null} searchBarPlaceholder="Search top deals...">
+    <List
+      isLoading={isLoading || selectedStores === null}
+      searchBarPlaceholder="Search top deals..."
+    >
       {filteredDeals.map((deal) => {
         const store = STORES[deal.storeID] || {
           name: "Unknown",
@@ -155,26 +159,31 @@ data.sort((a: any, b: any) => {
             title={deal.title}
             subtitle={store.name}
             icon={{ source: deal.thumb, fallback: Icon.GameController }}
-accessories={[
-    { text: `$${deal.normalPrice} → $${deal.salePrice}` },
-    { tag: { value: `-${discount}%`, color: Color.Green } },
-    {
-      icon: { source: Icon.Star, tintColor: Color.Yellow },
-      text: deal.dealRating ? parseFloat(deal.dealRating).toFixed(1) : "N/A",
-    },
-  ]}
-actions={
+            accessories={[
+              { text: `$${deal.normalPrice} → $${deal.salePrice}` },
+              { tag: { value: `-${discount}%`, color: Color.Green } },
+              {
+                icon: { source: Icon.Star, tintColor: Color.Yellow },
+                text: deal.dealRating
+                  ? parseFloat(deal.dealRating).toFixed(1)
+                  : "N/A",
+              },
+            ]}
+            actions={
               <ActionPanel>
                 <Action.OpenInBrowser
                   title="View Deal"
                   url={`https://www.cheapshark.com/redirect?dealID=${deal.dealID}`}
                 />
-                <Action.CopyToClipboard 
-                  title="Copy Deal Link" 
-                  content={`https://www.cheapshark.com/redirect?dealID=${deal.dealID}`} 
-                  shortcut={{ Windows: { modifiers: ["ctrl", "shift"], key: "c" }, macOS: { modifiers: ["cmd", "shift"], key: "c" } }} 
+                <Action.CopyToClipboard
+                  title="Copy Deal Link"
+                  content={`https://www.cheapshark.com/redirect?dealID=${deal.dealID}`}
+                  shortcut={{
+                    Windows: { modifiers: ["ctrl", "shift"], key: "c" },
+                    macOS: { modifiers: ["cmd", "shift"], key: "c" },
+                  }}
                 />
-                
+
                 {deal.metacriticLink && (
                   <>
                     <Action.OpenInBrowser
@@ -186,10 +195,16 @@ actions={
                       }}
                       icon={Icon.BarChart}
                     />
-                    <Action.CopyToClipboard 
-                      title="Copy Metacritic Link" 
-                      content={`https://www.metacritic.com${deal.metacriticLink}`} 
-                      shortcut={{ Windows: { modifiers: ["ctrl", "shift", "alt"], key: "c" }, macOS: { modifiers: ["cmd", "shift", "opt"], key: "c" } }}
+                    <Action.CopyToClipboard
+                      title="Copy Metacritic Link"
+                      content={`https://www.metacritic.com${deal.metacriticLink}`}
+                      shortcut={{
+                        Windows: {
+                          modifiers: ["ctrl", "shift", "alt"],
+                          key: "c",
+                        },
+                        macOS: { modifiers: ["cmd", "shift", "opt"], key: "c" },
+                      }}
                     />
                   </>
                 )}

@@ -14,7 +14,12 @@ export const STORE_MAP: Record<string, string[]> = {
   dlgamer: ["DLGamer"],
   gamebillet: ["GameBillet"],
   voidu: ["Voidu"],
-  gamesplanet: ["GamesPlanet US", "GamesPlanet UK", "GamesPlanet FR", "GamesPlanet DE"],
+  gamesplanet: [
+    "GamesPlanet US",
+    "GamesPlanet UK",
+    "GamesPlanet FR",
+    "GamesPlanet DE",
+  ],
   wingamestore: ["WinGameStore", "MacGameStore"],
   "2game": ["2Game"],
   allyouplay: ["AllYouPlay"],
@@ -31,17 +36,52 @@ for (const [id, names] of Object.entries(STORE_MAP)) {
   });
 }
 
-export function formatPrice(amount: number | undefined, currency: string | undefined): string {
+export function formatPrice(
+  amount: number | undefined,
+  currency: string | undefined,
+): string {
   if (amount === undefined || amount === null) return "-";
   if (amount === 0) return "FREE";
   const symbols: Record<string, string> = {
-    USD: "$", GBP: "£", EUR: "€", TRY: "₺", JPY: "¥", CNY: "¥", KRW: "₩",
-    INR: "₹", RUB: "₽", BRL: "R$", CAD: "CA$", AUD: "A$", NZD: "NZ$",
-    HKD: "HK$", SGD: "S$", MXN: "MX$", NOK: "kr", SEK: "kr", DKK: "kr",
-    PLN: "zł", CZK: "Kč", HUF: "Ft", CHF: "CHF", ZAR: "R", SAR: "﷼",
-    AED: "د.إ", QAR: "﷼", THB: "฿", IDR: "Rp", MYR: "RM", PHP: "₱",
-    TWD: "NT$", ARS: "ARS$", CLP: "CLP$", COP: "COP$", UYU: "UYU$",
-    KZT: "₸", ILS: "₪", UAH: "₴",
+    USD: "$",
+    GBP: "£",
+    EUR: "€",
+    TRY: "₺",
+    JPY: "¥",
+    CNY: "¥",
+    KRW: "₩",
+    INR: "₹",
+    RUB: "₽",
+    BRL: "R$",
+    CAD: "CA$",
+    AUD: "A$",
+    NZD: "NZ$",
+    HKD: "HK$",
+    SGD: "S$",
+    MXN: "MX$",
+    NOK: "kr",
+    SEK: "kr",
+    DKK: "kr",
+    PLN: "zł",
+    CZK: "Kč",
+    HUF: "Ft",
+    CHF: "CHF",
+    ZAR: "R",
+    SAR: "﷼",
+    AED: "د.إ",
+    QAR: "﷼",
+    THB: "฿",
+    IDR: "Rp",
+    MYR: "RM",
+    PHP: "₱",
+    TWD: "NT$",
+    ARS: "ARS$",
+    CLP: "CLP$",
+    COP: "COP$",
+    UYU: "UYU$",
+    KZT: "₸",
+    ILS: "₪",
+    UAH: "₴",
   };
   const curr = currency || "USD";
   const symbol = symbols[curr] || curr + " ";
@@ -49,8 +89,15 @@ export function formatPrice(amount: number | undefined, currency: string | undef
   return `${symbol}${noDecimals.includes(curr) ? Math.round(amount) : amount.toFixed(2)}`;
 }
 
-export function isStoreAllowed(shopName: string, selectedStores: string[]): boolean {
-  if (selectedStores.length === 0 || (selectedStores.length === 1 && selectedStores[0] === "all")) return true;
+export function isStoreAllowed(
+  shopName: string,
+  selectedStores: string[],
+): boolean {
+  if (
+    selectedStores.length === 0 ||
+    (selectedStores.length === 1 && selectedStores[0] === "all")
+  )
+    return true;
   return selectedStores.includes(STORE_LOOKUP[shopName] || "other");
 }
 

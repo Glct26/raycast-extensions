@@ -34,7 +34,7 @@ export const UNIFIED_STORES = [
   { id: "ubisoft", name: "Ubisoft Store" },
   { id: "voidu", name: "Voidu" },
   { id: "wingamestore", name: "WinGameStore / MacGameStore" },
-  { id: "other", name: "Other (Unlisted Stores)" }
+  { id: "other", name: "Other (Unlisted Stores)" },
 ];
 
 export default function ManageStores() {
@@ -80,10 +80,10 @@ export default function ManageStores() {
     await LocalStorage.setItem("selected_stores", JSON.stringify(allIds));
   };
 
-const selectNone = () => {
-  setSelectedIds([]);
-  // Don't save to the LocalStorage
-};
+  const selectNone = () => {
+    setSelectedIds([]);
+    // Don't save to the LocalStorage
+  };
 
   return (
     <List isLoading={isLoading} searchBarPlaceholder="Search stores...">
