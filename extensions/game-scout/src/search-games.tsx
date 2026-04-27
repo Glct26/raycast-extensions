@@ -230,7 +230,6 @@ export default function Command() {
         />
       ) : (
         filteredData.slice(0, MAX_RESULTS).map((game: any) => {
-          console.log(game.title, "| type:", game.type);
           const overview = priceData?.find((p: any) => p.id === game.id);
           const deal = overview?.current || overview;
           const isSaved = savedGames.some((g) => g.id === game.id);
@@ -992,15 +991,7 @@ ${
     : ""
 }
 
-${
-  steamData?.short_description
-    ? `> ${steamData.short_description
-        .replace(/<[^>]*>?/gm, "")
-        .split(".")
-        .slice(0, 2)
-        .join(".")}.`
-    : ""
-}
+${steamData?.short_description ? `> ${steamData.short_description.replace(/<[^>]*>?/gm, "").split(". ")[0]}.` : ""}
 
 ${heroSection}
 💰 **Prices in ${COUNTRY}**
@@ -1009,7 +1000,7 @@ ${heroSection}
 | :--- | :--- | :--- | :--- |
 ${filteredDeals?.length ? filteredDeals.map((p: any) => `| ${p.url ? `[${p.shop?.name}](${p.url})` : p.shop?.name} | **${formatPrice(p.price?.amount, p.price?.currency)}** | ${formatPrice(p.regular?.amount, p.price?.currency)} | ${p.cut > 0 ? "-" + p.cut + "%" : "-"} |`).join("\n") : "| No data found | - | - | - |"}
 
-${chartUrl ? `\n---\n\n<p align="center">📈 <b>Trend: ${range === "1y" ? "12 Months" : range === "6m" ? "6 Months" : "3 Months"}</b></p>\n<p align="center"><img src="${chartUrl}" /></p>\n` : ""}
+${chartUrl ? `\n---\n\n📈 **Trend: ${range === "1y" ? "12 Months" : range === "6m" ? "6 Months" : "3 Months"}**\n\n![Price History](${chartUrl})\n` : ""}
 `;
 
   return (
