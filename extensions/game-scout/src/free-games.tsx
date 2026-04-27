@@ -184,6 +184,7 @@ export default function FreeGames() {
       return platforms.includes("switch") || platforms.includes("nintendo");
     if (viewFilter === "mobile")
       return platforms.includes("android") || platforms.includes("ios");
+  if (viewFilter === "vr") return platforms.includes("vr");
 
     return true;
   });
@@ -211,33 +212,14 @@ export default function FreeGames() {
             />
           </List.Dropdown.Section>
 
-          <List.Dropdown.Section title="Platforms">
-            <List.Dropdown.Item
-              title="PC / Windows"
-              value="pc"
-              icon={Icon.Monitor}
-            />
-            <List.Dropdown.Item
-              title="PlayStation"
-              value="ps"
-              icon={Icon.GameController}
-            />
-            <List.Dropdown.Item
-              title="Xbox"
-              value="xbox"
-              icon={Icon.GameController}
-            />
-            <List.Dropdown.Item
-              title="Nintendo Switch"
-              value="switch"
-              icon={Icon.GameController}
-            />
-            <List.Dropdown.Item
-              title="Mobile"
-              value="mobile"
-              icon={Icon.Mobile}
-            />
-          </List.Dropdown.Section>
+<List.Dropdown.Section title="Platforms">
+  <List.Dropdown.Item title="PC / Windows" value="pc" icon={Icon.Monitor} />
+  <List.Dropdown.Item title="PlayStation" value="ps" icon={Icon.GameController} />
+  <List.Dropdown.Item title="Xbox" value="xbox" icon={Icon.GameController} />
+  <List.Dropdown.Item title="Nintendo Switch" value="switch" icon={Icon.GameController} />
+  <List.Dropdown.Item title="Mobile" value="mobile" icon={Icon.Mobile} />
+  <List.Dropdown.Item title="VR" value="vr" icon={Icon.Eye} />
+</List.Dropdown.Section>
         </List.Dropdown>
       }
     >

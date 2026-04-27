@@ -343,8 +343,7 @@
     { "path": "metadata/4.png", "title": "Game Detail - BUY & Chart" },
     { "path": "metadata/5.png", "title": "Free Games" },
     { "path": "metadata/6.png", "title": "Top Deals" },
-    { "path": "metadata/7.png", "title": "Manage Stores" },
-    { "path": "metadata/8.png", "title": "Preferences" }
+    { "path": "metadata/7.png", "title": "Manage Stores" }
   ],
   "scripts": {
     "dev": "ray dev",
