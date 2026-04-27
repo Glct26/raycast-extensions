@@ -850,11 +850,11 @@ function GameDetail({
     verdict = "Free";
     reason = "Free to claim";
   } else if (bundle.activeCount > 0 && bundleValue?.type === "better") {
-    recommendation = "🔴 SKIP";
+    recommendation = "🔴 HIGH PRICE";
     verdict = "Overpriced";
     reason = bundleValue.message;
   } else if (bundle.activeCount > 0 && bundleValue?.type === "value") {
-    recommendation = "🟡 WAIT";
+    recommendation = "🟡 FAIR PRICE";
     verdict = "Not ideal";
     reason = bundleValue.message;
   } else if (currentPrice != null) {
@@ -883,10 +883,11 @@ function GameDetail({
 
     score = Math.max(0, Math.min(1, score));
 
-    if (score >= 0.7) recommendation = "🔥 BUY";
+    // Recommendation thresholds
+    if (score >= 0.7) recommendation = "🔥 GREAT DEAL";
     else if (score >= 0.5) recommendation = "👍 GOOD DEAL";
-    else if (score >= 0.35) recommendation = "🟡 WAIT";
-    else recommendation = "🔴 SKIP";
+    else if (score >= 0.35) recommendation = "🟡 FAIR PRICE";
+    else recommendation = "🔴 HIGH PRICE";
 
     const isATL = currentPrice <= safeATL;
     const isNearATL = currentPrice <= safeATL * 1.05;
@@ -897,7 +898,7 @@ function GameDetail({
       if (cut === 0 && (!median || isAtTypical)) {
         verdict = "Fair price";
         reason = "Typical price for this game";
-        recommendation = "🟡 WAIT";
+        recommendation = "🟡 FAIR PRICE";
       } else {
         verdict = cut > 0 ? "Not ideal" : "Overpriced";
         reason =
@@ -1066,7 +1067,9 @@ ${chartUrl ? `\n---\n\n📈 **Trend: ${range === "1y" ? "12 Months" : range === 
             />
           )}
           {verdict &&
-            ["🔥 BUY", "👍 GOOD DEAL", "🆓 FREE"].includes(recommendation) && (
+            ["🔥 GREAT DEAL", "👍 GOOD DEAL", "🆓 FREE"].includes(
+              recommendation,
+            ) && (
               <Detail.Metadata.Label
                 title="Verdict"
                 text={verdict}
