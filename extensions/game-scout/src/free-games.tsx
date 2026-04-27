@@ -11,10 +11,6 @@ import {
 } from "@raycast/api";
 import { useFetch } from "@raycast/utils";
 
-interface Preferences {
-  showDLCFreeGames: boolean;
-}
-
 interface Giveaway {
   id: number;
   title: string;
@@ -31,8 +27,6 @@ interface Giveaway {
   users: number;
   status: string;
 }
-
-const preferences = getPreferenceValues<Preferences>();
 
 function parsePlatformsAndStores(platformsString: string) {
   const parts = platformsString.split(", ").map((p) => p.trim());
@@ -138,6 +132,7 @@ function parsePlatformsAndStores(platformsString: string) {
 }
 
 export default function FreeGames() {
+	const preferences = getPreferenceValues();
   const { isLoading, data } = useFetch<Giveaway[]>(
     "https://www.gamerpower.com/api/giveaways",
   );
@@ -324,7 +319,7 @@ function GiveawayDetail({
   const endDate =
     game.end_date !== "N/A"
       ? new Date(game.end_date).toLocaleDateString("en-GB")
-      : "Unknown";
+      : "No end date";
 
   const markdown = `
 ![](${game.image})

@@ -33,6 +33,12 @@
       "title": "Free Games",
       "description": "Discover currently free games and giveaways.",
       "mode": "view"
+    },
+{
+      "name": "manage-stores",
+      "title": "Manage Stores",
+      "description": "Select which stores to include in your searches and deals.",
+      "mode": "view"
     }
   ],
   "preferences": [
@@ -56,12 +62,12 @@
           "value": "US"
         },
         {
-          "title": "Europe",
-          "value": "FR"
-        },
-        {
           "title": "United Kingdom",
           "value": "GB"
+        },
+		{
+          "title": "France",
+          "value": "FR"
         },
         {
           "title": "Australia",
@@ -130,10 +136,6 @@
         {
           "title": "Germany",
           "value": "DE"
-        },
-        {
-          "title": "France",
-          "value": "FR"
         },
         {
           "title": "Hong Kong",
@@ -311,6 +313,15 @@
       "label": "[Free Games] Show DLCs",
       "description": "Include downloadable content in the free games list.",
       "default": true
+    },
+	{
+      "name": "showPriceHistoryChart",
+      "type": "checkbox",
+      "required": false,
+      "title": "API & Performance",
+      "label": "[Game Details] Show Price History Chart",
+      "description": "Warning: Uses 1 extra API call per game to generate a 1-year price chart. Turn off if you check hundreds of games daily.",
+      "default": true
     }
   ],
   "dependencies": {
@@ -325,6 +336,16 @@
     "prettier": "^3.8.3",
     "typescript": "^6.0.3"
   },
+    "screenshots": [
+    { "path": "metadata/1.png", "title": "Search Games" },
+    { "path": "metadata/2.png", "title": "Saved Games" },
+    { "path": "metadata/3.png", "title": "Game Detail - SKIP & Bundle" },
+    { "path": "metadata/4.png", "title": "Game Detail - BUY & Chart" },
+    { "path": "metadata/5.png", "title": "Free Games" },
+    { "path": "metadata/6.png", "title": "Top Deals" },
+    { "path": "metadata/7.png", "title": "Manage Stores" },
+    { "path": "metadata/8.png", "title": "Preferences" }
+  ],
   "scripts": {
     "dev": "ray dev",
     "build": "ray build -e dist",

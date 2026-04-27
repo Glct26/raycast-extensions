@@ -4,16 +4,66 @@ The ultimate gaming companion for Raycast. Search across multiple storefronts, t
 
 ## Features
 
-* **Search Games:** Quickly look up any game, see its current price, all-time low, and active bundles using the IsThereAnyDeal API.
-* **Saved Games:** Add games to your personal watchlist. Prices and active bundles are automatically cached and updated in the background.
-* **Top Deals:** Discover the highest-rated game deals across 30+ official stores (Steam, Epic, GOG, etc.), powered by the CheapShark Deal Rating algorithm.
-* **Free Giveaways:** Never miss a 100% free game or DLC giveaway across PC, PlayStation, Xbox, and Mobile platforms.
+* **Smart Recommendation Engine:** Heuristic scoring evaluates current prices against All-Time Lows (ATL), medians, and active bundles to generate actionable verdicts (🔥 BUY, 👍 GOOD DEAL, 🟡 WAIT, 🔴 SKIP).
+* **Price History Charts:** Visual price trend graphs (3-month, 6-month, 1-year ranges) generated directly in the detail view. *(Note: Can be toggled off in preferences to save API limits).*
+* **Bundle Content Viewer:** Drill down into active bundles to inspect pricing tiers, expiration dates, and included games.
+* **Search Games:** Quickly look up any game, see its current price, all-time low, and active bundles (via **IsThereAnyDeal API**).
+* **Saved Games:** Add games to your personal watchlist. Features advanced filtering (Only Deals, Biggest Discount, Best Opportunities) and a dynamic 🔥 Price Drops section.
+* **Top Deals:** Discover the highest-rated game deals across 30+ official stores, powered by the CheapShark Deal Rating algorithm (via **CheapShark API** - No API key required).
+* **Free Games:** Never miss a 100% free game or DLC giveaway across PC, PlayStation, Xbox, and Mobile platforms (via **GamerPower API** - No API key required).
+* **Manage Stores:** Globally filter results across the extension so you only see prices from the storefronts you actually use.
 
-## Requirements
+## Setup
 
-The **Top Deals** and **Free Giveaways** commands work out of the box. 
+The **Top Deals**, **Free Games**, and **Manage Stores** commands work out of the box. 
 
 To use the **Search** and **Saved Games** features, a free API key from IsThereAnyDeal is required:
-1. Go to [IsThereAnyDeal](https://isthereanydeal.com/) and register.
-2. Navigate to your account settings to generate a personal API key.
-3. Open the extension preferences in Raycast and enter your API key and preferred store region.
+
+1. Create an account at [IsThereAnyDeal](https://isthereanydeal.com/).
+2. Go to the [Apps page](https://isthereanydeal.com/apps/) and click **Register App**.
+3. Enter a name for the application and click **Submit**.
+4. On your app's dashboard, locate the **API Keys** section on the right side.
+5. Copy the generated API key. *(Important: Use the API Key, **not** the OAuth Client ID or Client Secret on the left).*
+6. In Raycast, open the extension preferences and fill in:
+   * **IsThereAnyDeal API Key** — the API key you generated.
+   * **Country** — select your preferred region for pricing data.
+   * Configure optional preferences (e.g., max results, showing mature/DLC content, min discount, update frequency, and toggling the Price History Chart).
+
+## Commands
+
+| Command | Description |
+| :--- | :--- |
+| **Search Games** | Look up current prices, historical lows, and bundles for any game. |
+| **Saved Games** | Manage your personal watchlist and track active price drops. |
+| **Top Deals** | Browse the best daily discounts across 30+ official stores. |
+| **Free Games** | Find 100% free games, DLCs, and giveaways across all platforms. |
+| **Manage Stores** | Select which stores to include in your searches and deals. |
+
+## Actions
+
+### Global Actions
+* **Enter** — View detailed information (prices, charts, bundles, instructions) in full-screen.
+
+### Search & Saved Games
+* **Cmd+S / Ctrl+S** — Save / Remove game from your watchlist.
+* **Cmd+B / Ctrl+B** — View bundle contents (if active bundles exist).
+* **Cmd+R / Ctrl+R** — Force refresh price and chart data for the current game.
+
+### Saved Games Specific
+* **Cmd+Shift+Backspace / Ctrl+Shift+Backspace** — Clear all saved games.
+
+### Top Deals
+* **Cmd+M / Ctrl+M** — View Metacritic reviews (if available).
+* **Cmd+Shift+C / Ctrl+Shift+C** — Copy deal link.
+
+### Free Games
+* **Cmd+I / Ctrl+I** — Ignore / Restore giveaway (hides from the main list).
+
+### Manage Stores
+* **Cmd+Shift+A / Ctrl+Shift+A** — Select all stores.
+* **Cmd+Shift+D / Ctrl+Shift+D** — Deselect all stores.
+
+## Troubleshooting
+
+* **Getting "No Results" or "Invalid API Key" toast?** Double-check that you copied the **API Key** (from the right column) and not the OAuth Client ID from your IsThereAnyDeal app dashboard.
+* **Hitting API Rate Limits?** If you check hundreds of games daily, try turning off the `Show Price History Chart` setting in the extension preferences to save 1 API call per game lookup.

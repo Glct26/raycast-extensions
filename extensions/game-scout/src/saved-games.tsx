@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import {
   List,
   ActionPanel,
@@ -10,630 +10,749 @@ import {
   getPreferenceValues,
   Cache,
   openExtensionPreferences,
+  Image,
 } from "@raycast/api";
 
-interface Preferences {
-  itadApiKey: string;
-  country: string;
-}
-
-const preferences = getPreferenceValues<Preferences>();
+const preferences = getPreferenceValues();
 const API_KEY = (preferences.itadApiKey || "").trim();
 const COUNTRY = preferences.country;
 
 const cache = new Cache();
-const CACHE_KEY = `itad_saved_prices_${COUNTRY}`;
-const CACHE_TTL = 12 * 60 * 60 * 1000;
+const CACHE_KEY = `itad_saved_prices_v2_${COUNTRY}`;
+const CACHE_TTL = parseInt(preferences.refreshFrequency || "12") * 60 * 60 * 1000;
+const DETAIL_CACHE_TTL = 6 * 60 * 60 * 1000;
+const RECENT_BUNDLE_WINDOW = 2 * 365 * 24 * 60 * 60 * 1000;
+
+import { STORE_MAP, STORE_LOOKUP, formatPrice, isStoreAllowed, getTimeContext } from "./utils";
 
 export default function SavedGames() {
   const isApiKeyValid = API_KEY.length > 0;
-  const isCountryValid = COUNTRY.length === 2;
+  if (!isApiKeyValid) return <List><List.EmptyView title="API Key Required" icon={Icon.Key} actions={<ActionPanel><Action title="Open Preferences" onAction={openExtensionPreferences} /></ActionPanel>} /></List>;
 
-  if (!isApiKeyValid || !isCountryValid) {
-    return (
-      <List>
-        <List.EmptyView
-          icon={!isApiKeyValid ? Icon.Key : Icon.Globe}
-          title={!isApiKeyValid ? "API Key Required" : "Region Setup Required"}
-          description={
-            !isApiKeyValid
-              ? "Please enter your IsThereAnyDeal API Key in preferences, then reopen the extension."
-              : "Please select a valid store region in preferences, then reopen the extension."
-          }
-          actions={
-            <ActionPanel>
-              <Action
-                title="Open Preferences"
-                icon={Icon.Gear}
-                onAction={openExtensionPreferences}
-                shortcut={{
-                  Windows: { modifiers: ["ctrl"], key: "p" },
-                  macOS: { modifiers: ["cmd"], key: "p" },
-                }}
-              />
-            </ActionPanel>
-          }
-        />
-      </List>
-    );
-  }
-
-  const [savedGames, setSavedGames] = useState<
-    { id: string; title: string; slug: string; type?: string }[]
-  >([]);
-  const [prices, setPrices] = useState<any>({});
+  const [savedGames, setSavedGames] = useState<{ id: string; title: string; slug: string; type?: string }[]>([]);
+  const [rawPrices, setRawPrices] = useState<Record<string, any[]>>({});
   const [bundleCounts, setBundleCounts] = useState<Record<string, number>>({});
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [referencePrices, setReferencePrices] = useState<Record<string, number>>({});
   const [isLoading, setIsLoading] = useState(true);
+  const [selectedStores, setSelectedStores] = useState<string[]>(["all"]);
+  const [filterMode, setFilterMode] = useState<string>("default");
 
   useEffect(() => {
-    LocalStorage.getItem<string>("saved_itad_games").then((stored) => {
-      if (stored) setSavedGames(JSON.parse(stored));
-      else setIsLoading(false);
-    });
-  }, []);
+    LocalStorage.getItem<string>("selected_stores").then((s) => setSelectedStores(s ? JSON.parse(s) : ["all"]));
+    LocalStorage.getItem<string>("saved_itad_games").then((s) => s ? setSavedGames(JSON.parse(s)) : setIsLoading(false));
+    LocalStorage.getItem<string>("last_seen_prices").then((s) => s && setReferencePrices(JSON.parse(s)));
+  }, [refreshKey]);
 
-  const fetchPrices = async (forceRefresh = false) => {
-    if (savedGames.length === 0) {
-      setIsLoading(false);
-      return;
-    }
-
+  const fetchPrices = async () => {
+    if (savedGames.length === 0) { setIsLoading(false); return; }
     setIsLoading(true);
-    const gameIds = savedGames.map((g) => g.id);
-    const cachedString = cache.get(CACHE_KEY);
-
-    if (cachedString && !forceRefresh) {
-      const parsed = JSON.parse(cachedString);
-      const cacheAge = Date.now() - parsed.timestamp;
-      const hasAllIds = gameIds.every((id) => parsed.data[id] !== undefined);
-
-      if (cacheAge < CACHE_TTL && hasAllIds) {
-        setPrices(parsed.data);
-        setBundleCounts(parsed.bundles || {});
-        setIsLoading(false);
-        return;
-      }
-    }
-
     try {
-      const [priceRes, overviewRes] = await Promise.all([
-        fetch(
-          `https://api.isthereanydeal.com/games/prices/v2?key=${API_KEY}&country=${COUNTRY}&nondeals=true`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(gameIds),
-          },
-        ),
-        fetch(
-          `https://api.isthereanydeal.com/games/overview/v2?key=${API_KEY}&country=${COUNTRY}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(gameIds),
-          },
-        ),
+      const gameIds = savedGames.map(g => g.id);
+      const [pRes, oRes] = await Promise.all([
+        fetch(`https://api.isthereanydeal.com/games/prices/v2?key=${API_KEY}&country=${COUNTRY}&nondeals=true`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(gameIds) }),
+        fetch(`https://api.isthereanydeal.com/games/overview/v2?key=${API_KEY}&country=${COUNTRY}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(gameIds) })
       ]);
-
-      const [priceJson, overviewJson] = await Promise.all([
-        priceRes.json(),
-        overviewRes.json(),
-      ]);
-
-      const priceMap: any = {};
-      (Array.isArray(priceJson) ? priceJson : Object.values(priceJson)).forEach(
-        (item: any) => {
-          priceMap[item.id] = item.deals?.[0] || null;
-        },
-      );
-
-      const bundleMap: Record<string, number> = {};
-      gameIds.forEach((id) => {
-        bundleMap[id] = 0;
+      const [pJson, oJson] = await Promise.all([pRes.json(), oRes.json()]);
+      
+      const rMap: any = {}; 
+      const newLastSeen: Record<string, number> = {};
+      
+      (Array.isArray(pJson) ? pJson : Object.values(pJson)).forEach((it: any) => {
+        rMap[it.id] = it.deals || [];
+        const bestDeal = it.deals?.find((d: any) => isStoreAllowed(d.shop?.name || "", selectedStores));
+        if (bestDeal?.price?.amount != null) {
+          newLastSeen[it.id] = bestDeal.price.amount;
+        }
       });
 
-      const now = new Date();
-      const activeBundles = (overviewJson.bundles || []).filter((b: any) =>
-        b.expiry ? new Date(b.expiry) > now : true,
-      );
+const now = Date.now();
+const bMap: any = {}; 
+gameIds.forEach(id => {
+  bMap[id] = (oJson.bundles || []).filter((b: any) => {
+    const isNotExpired = !b.expiry || new Date(b.expiry).getTime() > now;
+    return isNotExpired && b.tiers?.some((t: any) => t.games?.some((gm: any) => gm.id === id));
+  }).length;
+});
 
-      activeBundles.forEach((bundle: any) => {
-        bundle.tiers?.forEach((tier: any) => {
-          tier.games?.forEach((game: any) => {
-            if (game.id in bundleMap) {
-              bundleMap[game.id]++;
-            }
-          });
-        });
+      setRawPrices(rMap); 
+      setBundleCounts(bMap);
+      
+      const existing = await LocalStorage.getItem<string>("last_seen_prices");
+      const parsed = existing ? JSON.parse(existing) : {};
+      const merged = { ...parsed, ...newLastSeen };
+      
+      await LocalStorage.setItem("last_seen_prices", JSON.stringify(merged));
+      
+    } catch (e: any) { if (e.name !== "AbortError" && !e.message?.includes("aborted")) console.error(e); } finally { setIsLoading(false); }
+  };
+
+  useEffect(() => { fetchPrices(); }, [savedGames]);
+
+  const prices = useMemo(() => {
+    const map: any = {}; 
+    Object.keys(rawPrices).forEach(id => { map[id] = rawPrices[id].filter((d: any) => isStoreAllowed(d.shop?.name || "", selectedStores))[0] || null; });
+    return map;
+  }, [rawPrices, selectedStores]);
+
+  const scoreGame = (id: string) => {
+    const deal = prices[id];
+    if (!deal) return -999;
+    const price = deal.price?.amount ?? 999;
+    const cut = deal.cut ?? 0;
+    const bundle = bundleCounts[id] ?? 0;
+    const normDiscount = cut / 100;
+    const normPrice = 1 - Math.min(price / 60, 1);
+    const bundleBonus = bundle > 0 ? 0.15 : 0;
+    return normDiscount * 0.5 + normPrice * 0.35 + bundleBonus;
+  };
+
+  const sortedAndFilteredGames = useMemo(() => {
+    let list = [...savedGames];
+    if (filterMode === "deals") {
+      list = list.filter(g => prices[g.id] && prices[g.id].cut > 0);
+    } else if (filterMode === "discount") {
+      list.sort((a, b) => (prices[b.id]?.cut || 0) - (prices[a.id]?.cut || 0));
+    } else if (filterMode === "opportunity") {
+      list.sort((a, b) => scoreGame(b.id) - scoreGame(a.id));
+    } else if (filterMode === "lowest") {
+      list.sort((a, b) => {
+        const pA = prices[a.id]?.price?.amount ?? 999999;
+        const pB = prices[b.id]?.price?.amount ?? 999999;
+        return pA - pB;
       });
-
-      cache.set(
-        CACHE_KEY,
-        JSON.stringify({
-          timestamp: Date.now(),
-          data: priceMap,
-          bundles: bundleMap,
-        }),
-      );
-      setPrices(priceMap);
-      setBundleCounts(bundleMap);
-    } catch (error) {
-      console.error("Failed to fetch saved prices", error);
     }
-    setIsLoading(false);
+    return list;
+  }, [savedGames, prices, filterMode]);
+
+  const removeGame = async (id: string) => { 
+    const newList = savedGames.filter(g => g.id !== id); 
+    setSavedGames(newList); 
+    await LocalStorage.setItem("saved_itad_games", JSON.stringify(newList)); 
   };
 
-  useEffect(() => {
-    fetchPrices();
-  }, [savedGames]);
-
-  const removeGame = async (id: string) => {
-    const newList = savedGames.filter((g) => g.id !== id);
-    setSavedGames(newList);
-    await LocalStorage.setItem("saved_itad_games", JSON.stringify(newList));
-  };
-
-  const clearAll = async () => {
-    setSavedGames([]);
-    await LocalStorage.removeItem("saved_itad_games");
-    cache.remove(CACHE_KEY);
-  };
+  const majorDrops = savedGames.filter(game => {
+    const last = referencePrices[game.id];
+    const current = prices[game.id]?.price?.amount;
+    if (!last || !current) return false;
+    const diff = ((current - last) / last) * 100;
+    return diff <= -10;
+  });
 
   return (
-    <List
-      isLoading={isLoading}
-      searchBarPlaceholder="Search in your saved games..."
+    <List 
+      isLoading={isLoading} 
+      searchBarPlaceholder="Search saved games..."
+      searchBarAccessory={
+        <List.Dropdown tooltip="Filter & Sort" onChange={setFilterMode}>
+          <List.Dropdown.Item title="Recently Saved" value="default" />
+          <List.Dropdown.Item title="Only Deals" value="deals" />
+          <List.Dropdown.Item title="Biggest Discount" value="discount" />
+          <List.Dropdown.Item title="Lowest Price" value="lowest" />
+          <List.Dropdown.Item title="Best Opportunities" value="opportunity" />
+        </List.Dropdown>
+      }
     >
-      {savedGames.length === 0 && !isLoading && (
-        <List.EmptyView
-          title="No Saved Games"
-          description="Use the 'Search Games' command to find and save games here."
-          icon={Icon.Star}
-        />
-      )}
-
-      {savedGames.map((game) => {
-        const deal = prices[game.id];
-
-        const currentAmount = deal?.price?.amount;
-        const regularAmount = deal?.regular?.amount;
-        const currency = deal?.price?.currency || "USD";
-        const cutPercent = deal?.cut || 0;
-
-        let priceDisplay = "No Deal";
-        if (currentAmount !== undefined) {
-          if (cutPercent > 0 && regularAmount !== undefined) {
-            priceDisplay = `${regularAmount} → ${currentAmount} ${currency}`;
-          } else {
-            priceDisplay = `${currentAmount} ${currency}`;
-          }
-        }
-
-        const itemAccessories = [];
-        if (cutPercent > 0) {
-          itemAccessories.push({
-            tag: { value: `-${cutPercent}%`, color: Color.Green },
-          });
-        }
-        if ((bundleCounts[game.id] ?? 0) > 0) {
-          itemAccessories.push({
-            tag: { value: "IN BUNDLE", color: Color.Purple },
-          });
-        }
-
-        return (
-          <List.Item
-            key={game.id}
-            title={game.title}
-            icon={Icon.StarCircle}
-            subtitle=""
-            accessories={[{ text: priceDisplay }, ...itemAccessories]}
-            actions={
-              <ActionPanel>
-                <ActionPanel.Section>
-                  <Action.Push
-                    title="View Game Details"
-                    target={
-                      <GameDetail
-                        gameId={game.id}
-                        gameTitle={game.title}
-                        gameSlug={game.slug}
-                        gameType={game.type || "OTHER"}
-                        removeGame={() => removeGame(game.id)}
-                      />
+      {savedGames.length === 0 && !isLoading ? (
+        <List.EmptyView title="No saved games yet" description="Search games and save them for tracking." icon={Icon.Star} />
+      ) : (
+        <>
+          {majorDrops.length > 0 && filterMode === "default" && (
+            <List.Section title={`🔥 ${majorDrops.length} Price Drops`}>
+              {sortedAndFilteredGames.filter(g => majorDrops.some(d => d.id === g.id)).map(game => {
+                const deal = prices[game.id];
+                const diff = ((deal?.price?.amount - referencePrices[game.id]) / referencePrices[game.id]) * 100;
+                return (
+                  <List.Item key={`drop-${game.id}`} title={game.title} icon={Icon.Star}
+                    accessories={[
+                      { text: formatPrice(deal?.price?.amount, deal?.price?.currency) },
+                      { tag: { value: `🔻 ${Math.abs(diff).toFixed(0)}%`, color: Color.Green } }
+                    ]}
+                    actions={<ActionPanel><Action.Push title="View Game Details" target={<GameDetail gameId={game.id} gameTitle={game.title} gameSlug={game.slug} gameType={game.type || "OTHER"} removeGame={() => removeGame(game.id)} />} icon={Icon.Sidebar} /></ActionPanel>}
+                  />
+                );
+              })}
+            </List.Section>
+          )}
+          {sortedAndFilteredGames.map(game => {
+            const deal = prices[game.id];
+            const acc = [];
+            
+            if (!deal && isLoading) {
+               acc.push({ icon: Icon.Clock, tooltip: "Loading price...", tintColor: Color.SecondaryText });
+            } else if (deal) {
+              const currentPrice = deal.price?.amount;
+              const lastPrice = referencePrices[game.id];
+              
+              if (lastPrice && currentPrice !== lastPrice) {
+                const diffAbs = currentPrice - lastPrice;
+                const diffPct = (diffAbs / lastPrice) * 100;
+                
+                if (Math.abs(diffPct) >= 3) {
+                  let label = "";
+                  if (diffPct <= -10) label = "🔥 DROP";
+                  else if (diffPct < 0) label = "⬇ DOWN";
+                  else if (diffPct >= 10) label = "⚠️ SPIKE";
+                  else label = "⬆ UP";
+                  
+                  acc.push({
+                    tag: {
+                      value: `${label} ${diffPct > 0 ? "+" : ""}${diffPct.toFixed(0)}%`,
+                      color: diffPct > 0 ? Color.Red : Color.Green
                     }
-                    icon={Icon.Sidebar}
-                  />
-                  {deal?.url && (
-                    <Action.OpenInBrowser
-                      title="Open Best Deal"
-                      url={deal.url}
-                      icon={Icon.Cart}
-                    />
-                  )}
-                </ActionPanel.Section>
-                <ActionPanel.Section>
-                  <Action
-                    title="Remove from Saved"
-                    onAction={() => removeGame(game.id)}
-                    icon={Icon.Trash}
-                    shortcut={{
-                      Windows: { modifiers: ["ctrl"], key: "backspace" },
-                      macOS: { modifiers: ["cmd"], key: "backspace" },
-                    }}
-                    style={Action.Style.Destructive}
-                  />
-                  <Action
-                    title="Clear All Saved Games"
-                    onAction={clearAll}
-                    icon={Icon.DeleteDocument}
-                    shortcut={{
-                      Windows: {
-                        modifiers: ["ctrl", "shift"],
-                        key: "backspace",
-                      },
-                      macOS: { modifiers: ["cmd", "shift"], key: "backspace" },
-                    }}
-                    style={Action.Style.Destructive}
-                  />
-                </ActionPanel.Section>
-              </ActionPanel>
+                  });
+                }
+              }
+
+const regularPrice = deal.regular?.amount;
+              const currency = deal.price?.currency;
+              const cut = deal.cut || 0;
+
+              if (cut > 0 && regularPrice != null && regularPrice > currentPrice) {
+                acc.push({ text: `${formatPrice(regularPrice, currency)} → ${formatPrice(currentPrice, currency)}` });
+              } else {
+                acc.push({ text: formatPrice(currentPrice, currency) });
+              }
+              
+              if (cut > 0) {
+                acc.push({ tag: { value: `-${cut}%`, color: Color.Green } });
+              }
             }
-          />
-        );
-      })}
+            
+            if (bundleCounts[game.id] > 0) {
+  acc.push({ 
+    icon: { source: Icon.Box, tintColor: Color.Purple }, 
+    tooltip: "Available in a Bundle" 
+  });
+}
+const isMusic = (!game.type || game.type === "dlc" || game.type === "OTHER") && (
+  game.title?.toLowerCase().endsWith(" ost") ||
+  game.title?.toLowerCase().includes("soundtrack")
+);
+            const cleanType = isMusic ? "SOUNDTRACK" : game.type === "game" || game.type === "base" ? undefined : game.type?.toUpperCase() || undefined;
+            
+let listIcon: any = Icon.Star;
+if (deal?.cut >= 80) {
+  listIcon = { source: Icon.Star, tintColor: Color.Red };
+} else if (deal?.cut >= 50) {
+  listIcon = { source: Icon.Star, tintColor: Color.Orange };
+} else if (deal?.cut > 0) {
+  listIcon = { source: Icon.Star, tintColor: Color.Green };
+}
+
+            return (
+              <List.Item key={game.id} title={game.title} icon={listIcon} subtitle={cleanType} accessories={acc}
+                actions={
+<ActionPanel>
+  <ActionPanel.Section>
+    <Action.Push title="View Game Details" target={<GameDetail gameId={game.id} gameTitle={game.title} gameSlug={game.slug} gameType={game.type || "OTHER"} removeGame={() => removeGame(game.id)} />} icon={Icon.Sidebar} />
+    {deal?.url && <Action.OpenInBrowser title="Open Best Deal" url={deal.url} icon={Icon.Cart} />}
+  </ActionPanel.Section>
+  <ActionPanel.Section>
+    <Action title="Remove from Saved" onAction={() => removeGame(game.id)} icon={Icon.Trash} style={Action.Style.Destructive} shortcut={{ Windows: { modifiers: ["ctrl"], key: "s" }, macOS: { modifiers: ["cmd"], key: "s" } }} />
+    <Action
+      title="Clear All Saved Games"
+      onAction={async () => {
+        setSavedGames([]);
+        await LocalStorage.setItem("saved_itad_games", JSON.stringify([]));
+      }}
+      icon={Icon.Trash}
+      style={Action.Style.Destructive}
+      shortcut={{ Windows: { modifiers: ["ctrl", "shift"], key: "backspace" }, macOS: { modifiers: ["cmd", "shift"], key: "backspace" } }}
+    />
+  </ActionPanel.Section>
+</ActionPanel>
+                }
+              />
+            );
+          })}
+        </>
+      )}
     </List>
   );
 }
 
-function GameDetail({
-  gameId,
-  gameTitle,
-  gameSlug,
-  gameType,
-  removeGame,
-}: {
-  gameId: string;
-  gameTitle: string;
-  gameSlug: string;
-  gameType: string;
-  removeGame: () => void;
-}) {
-  const [data, setData] = useState<{
-    steamData: any;
-    realBundles: any[];
-    deals: any[];
-    historyLow: any;
-    overview: any;
-  }>({
-    steamData: null,
-    realBundles: [],
-    deals: [],
-    historyLow: null,
-    overview: null,
-  });
-
+function GameDetail({ gameId, gameTitle, gameSlug, gameType, removeGame }: any) {
+  const [data, setData] = useState<any>({ steamData: null, realBundles: [], deals: [], historyLow: null, overview: null, historyChart: [], lastChecked: null });
   const [isLoading, setIsLoading] = useState(true);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [range, setRange] = useState<"3m" | "6m" | "1y">("1y");
+  const SHOW_CHART = preferences.showPriceHistoryChart ?? true;
+  const [selectedStores, setSelectedStores] = useState<string[]>(["all"]);
 
   useEffect(() => {
-    let isMounted = true;
-    const abortController = new AbortController();
-    const detailCacheKey = `itad_detail_${gameId}`;
+    LocalStorage.getItem<string>("selected_stores").then((s) => setSelectedStores(s ? JSON.parse(s) : ["all"]));
+    LocalStorage.getItem<string>("preferred_chart_range").then((s) => s && setRange(s as any));
+  }, [refreshKey]);
 
+  const handleSetRange = (r: "3m" | "6m" | "1y") => { setRange(r); LocalStorage.setItem("preferred_chart_range", r); };
+
+  useEffect(() => {
+    let isMounted = true; const abort = new AbortController();
+    const detailCacheKey = `search_detail_${gameId}_${COUNTRY}_v1`;
     const fetchDetailData = async () => {
       setIsLoading(true);
-
-      // Cache Kontrolü
-      const cachedString = cache.get(detailCacheKey);
-      if (cachedString) {
-        const parsed = JSON.parse(cachedString);
-        if (Date.now() - parsed.timestamp < CACHE_TTL) {
-          if (isMounted) {
-            setData(parsed.data);
-            setIsLoading(false);
-          }
-          return;
-        }
+      const cached = cache.get(detailCacheKey);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Date.now() - parsed.timestamp < DETAIL_CACHE_TTL) { if (isMounted) { setData({ ...parsed.data, lastChecked: parsed.timestamp }); setIsLoading(false); } return; }
       }
-
       try {
-        // 1. Steam Verisini Çek
-        let steamData = null;
-        const searchRes = await fetch(
-          `https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(gameTitle)}&l=english&cc=US`,
-          { signal: abortController.signal },
-        );
+        const searchRes = await fetch(`https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(gameTitle)}&l=english&cc=US`, { signal: abort.signal });
         const searchJson = await searchRes.json();
-
-        let targetItem = searchJson?.items?.find(
-          (item: any) => item.name.toLowerCase() === gameTitle.toLowerCase(),
-        );
-        if (!targetItem) {
-          targetItem = searchJson?.items?.find((item: any) => {
-            const sName = item.name.toLowerCase();
-            const iName = gameTitle.toLowerCase();
-            if (sName.includes(iName) || iName.includes(sName)) {
-              const sNums = sName.match(/\b\d+\b/g) || [];
-              const iNums: string[] = iName.match(/\b\d+\b/g) || [];
-              return sNums.every((n: string) => iNums.includes(n));
-            }
-            return false;
-          });
-        }
-        if (!targetItem) targetItem = searchJson?.items?.[0];
-
+        const targetItem = searchJson?.items?.find((i:any) => i.name.toLowerCase() === gameTitle.toLowerCase()) || searchJson?.items?.[0];
+        let steamData = null;
         if (targetItem?.id) {
-          const detailRes = await fetch(
-            `https://store.steampowered.com/api/appdetails?appids=${targetItem.id}`,
-            { signal: abortController.signal },
-          );
-          const detailJson = await detailRes.json();
-          steamData = detailJson?.[targetItem.id]?.data || null;
+          const detailRes = await fetch(`https://store.steampowered.com/api/appdetails?appids=${targetItem.id}&l=english`, { signal: abort.signal });
+          steamData = (await detailRes.json())?.[targetItem.id]?.data || null;
         }
+        const fetchPromises = [
+          fetch(`https://api.isthereanydeal.com/games/bundles/v2?key=${API_KEY}&id=${gameId}`, { signal: abort.signal }),
+          fetch(`https://api.isthereanydeal.com/games/prices/v2?key=${API_KEY}&country=${COUNTRY}&nondeals=true`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify([gameId]), signal: abort.signal }),
+          fetch(`https://api.isthereanydeal.com/games/historylow/v1?key=${API_KEY}&country=${COUNTRY}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify([gameId]), signal: abort.signal }),
+          fetch(`https://api.isthereanydeal.com/games/overview/v2?key=${API_KEY}&country=${COUNTRY}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify([gameId]), signal: abort.signal }),
+          fetch(`https://api.isthereanydeal.com/games/history/v2?key=${API_KEY}&id=${gameId}&country=${COUNTRY}`, { signal: abort.signal })
+        ];
+        const jsons = await Promise.all((await Promise.all(fetchPromises)).map(r => r.json()));
+        const combined = { steamData, realBundles: Array.isArray(jsons[0]) ? jsons[0] : (jsons[0]?.[gameId]?.bundles || []), deals: (Array.isArray(jsons[1]) ? jsons[1][0]?.deals : jsons[1]?.[gameId]?.deals) || [], historyLow: (Array.isArray(jsons[2]) ? jsons[2][0]?.low : jsons[2]?.[gameId]?.low) || null, overview: Array.isArray(jsons[3]) ? jsons[3][0] : jsons[3], historyChart: Array.isArray(jsons[4]) ? jsons[4] : [] };
+        if (isMounted) { cache.set(detailCacheKey, JSON.stringify({ timestamp: Date.now(), data: combined })); setData({ ...combined, lastChecked: Date.now() }); }
+      } catch (e: any) { if (e.name !== "AbortError" && !e.message?.includes("aborted")) console.error(e); } finally { if (isMounted) setIsLoading(false); }
+    };
+    fetchDetailData(); return () => { isMounted = false; abort.abort(); };
+  }, [gameId, gameTitle, SHOW_CHART, refreshKey]);
 
-        // 2. ITAD Verilerini Tek Seferde Çek
-        const [bundlesRes, pricesRes, historyRes, overviewRes] =
-          await Promise.all([
-            fetch(
-              `https://api.isthereanydeal.com/games/bundles/v2?key=${API_KEY}&id=${gameId}`,
-              { signal: abortController.signal },
-            ),
-            fetch(
-              `https://api.isthereanydeal.com/games/prices/v2?key=${API_KEY}&country=${COUNTRY}&nondeals=true`,
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify([gameId]),
-                signal: abortController.signal,
-              },
-            ),
-            fetch(
-              `https://api.isthereanydeal.com/games/historylow/v1?key=${API_KEY}&country=${COUNTRY}`,
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify([gameId]),
-                signal: abortController.signal,
-              },
-            ),
-            fetch(
-              `https://api.isthereanydeal.com/games/overview/v2?key=${API_KEY}&country=${COUNTRY}`,
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify([gameId]),
-                signal: abortController.signal,
-              },
-            ),
-          ]);
+  const { steamData, realBundles, deals = [], historyLow, overview, historyChart, lastChecked } = data;
+  
+  // ⏱️ TIME DOMAIN: Single deterministic snapshot
+  const now = useMemo(() => Date.now(), [refreshKey]);
 
-        const [bundlesJson, pricesJson, historyJson, overviewJson] =
-          await Promise.all([
-            bundlesRes.json(),
-            pricesRes.json(),
-            historyRes.json(),
-            overviewRes.json(),
-          ]);
-
-        // Verileri Formatla
-        const realBundles = Array.isArray(bundlesJson)
-          ? bundlesJson[0]?.bundles || bundlesJson
-          : bundlesJson[gameId]?.bundles || [];
-        const deals = Array.isArray(pricesJson)
-          ? pricesJson[0]?.deals
-          : pricesJson?.[gameId]?.deals || pricesJson?.deals || [];
-        const historyLow = Array.isArray(historyJson)
-          ? historyJson[0]?.low
-          : historyJson?.[gameId]?.low || historyJson?.low || null;
-        const overview = Array.isArray(overviewJson)
-          ? overviewJson[0]
-          : overviewJson?.[gameId] || overviewJson;
-
-        const combinedData = {
-          steamData,
-          realBundles,
-          deals,
-          historyLow,
-          overview,
-        };
-
-        // Cache'e Kaydet ve State'i Güncelle
-        if (isMounted) {
-          cache.set(
-            detailCacheKey,
-            JSON.stringify({ timestamp: Date.now(), data: combinedData }),
-          );
-          setData(combinedData);
-        }
-      } catch (error: any) {
-        if (error.name !== "AbortError")
-          console.error("Failed to fetch game details", error);
-      } finally {
-        if (isMounted) setIsLoading(false);
-      }
+  // 📦 BUNDLE DOMAIN: Single source of truth
+ const bundle = useMemo(() => {
+const isBundleActive = (b: any) => {
+      if (!b?.expiry) return true;
+      const t = new Date(b.expiry).getTime();
+      return Number.isFinite(t) && t > now;
     };
 
-    fetchDetailData();
-    return () => {
-      isMounted = false;
-      abortController.abort();
+    const activeBundles = realBundles.filter(isBundleActive);
+    const activeCount = activeBundles.length;
+
+    const recentBundles = realBundles.filter((b: any) => {
+      const tsRaw = b.created ?? b.timestamp;
+      const ts = tsRaw ? new Date(tsRaw).getTime() : null;
+      return ts && ts < now && now - ts < RECENT_BUNDLE_WINDOW;
+    });
+
+    const totalBundles = realBundles?.length > 0 
+      ? realBundles.length 
+      : typeof overview?.bundles === "number" 
+        ? overview.bundles 
+        : (overview?.bundles?.count || overview?.bundles?.length || 0);
+
+    let state: string | null = null;
+    let icon: Image.ImageLike | undefined = undefined;
+    let color: Color | undefined = undefined;
+
+    if (activeCount > 0) {
+      state = "Active";
+      icon = Icon.Box;
+      color = Color.Purple;
+    } else if (recentBundles.length >= 4) {
+      state = "Frequent";
+      icon = Icon.Repeat;
+      color = Color.Orange;
+    } else if (totalBundles >= 2) {
+      state = "Occasional";
+      icon = Icon.Circle;
+      color = Color.SecondaryText;
+    }
+
+    const getLowestPrice = (bundle: any) => {
+      const prices = bundle.tiers
+        ?.map((t: any) => t.price?.amount)
+        .filter((p: number | undefined) => typeof p === "number");
+      return prices?.length ? Math.min(...prices) : Infinity;
     };
-  }, [gameId, gameTitle]);
 
-  const { steamData, realBundles, deals, historyLow, overview } = data;
+    const featuredBundle = activeBundles.length > 0 
+      ? activeBundles.reduce((best: any, current: any) =>
+          getLowestPrice(current) < getLowestPrice(best) ? current : best
+        , activeBundles[0])
+      : null;
 
-  const hAmount = historyLow?.price?.amount ?? historyLow?.amount;
-  const hCurrency = historyLow?.price?.currency ?? historyLow?.currency ?? "";
-  const hDate = historyLow?.timestamp
-    ? new Date(historyLow.timestamp).toLocaleDateString("en-GB")
-    : "N/A";
+    const featuredPrice = featuredBundle ? getLowestPrice(featuredBundle) : null;
 
-  let totalBundles = 0;
-  let activeBundlesCount = 0;
-  let bundleSiteNames = "";
-
-  if (overview?.bundles && Array.isArray(overview.bundles)) {
-    totalBundles = overview.bundles.length;
-  }
-
-  if (realBundles && realBundles.length > 0) {
-    const now = new Date();
-    const activeList = realBundles.filter((b: any) =>
-      b.expiry ? new Date(b.expiry) > now : true,
-    );
-    activeBundlesCount = activeList.length;
-    if (activeBundlesCount > 0) {
-      const uniqueShops = Array.from(
-        new Set(activeList.map((b: any) => b.page?.name).filter(Boolean)),
+    const getGameTierPrice = (b: any) => {
+      const tiersWithGame = b.tiers?.filter((t: any) =>
+        t.games?.some((gm: any) => gm.id === gameId)
       );
-      bundleSiteNames =
-        uniqueShops.length > 1
-          ? "Multiple"
-          : (uniqueShops[0] as string) || "Unknown";
+      if (tiersWithGame && tiersWithGame.length > 0) {
+        const prices = tiersWithGame.map((t: any) => t.price?.amount).filter((p: any) => typeof p === "number");
+        return prices.length > 0 ? Math.min(...prices) : Infinity;
+      }
+      return Infinity; 
+    };
+
+    const bestGameTierPrice = activeBundles.length > 0
+      ? Math.min(...activeBundles.map(getGameTierPrice))
+      : null;
+
+    const actualBundlePrice = bestGameTierPrice !== Infinity && bestGameTierPrice !== null
+      ? bestGameTierPrice
+      : featuredPrice;
+
+    return {
+      activeBundles,
+      activeCount,
+      recentBundles,
+      totalBundles,
+      state,
+      icon,
+      color,
+      featuredBundle,
+      featuredPrice,
+      actualBundlePrice,
+      getLowestPrice,
+    };
+  }, [realBundles, overview, now, gameId]);
+
+  const allowedHistory = useMemo(() => {
+    return (historyChart || []).filter((pt: any) => pt.deal?.price?.amount != null && isStoreAllowed(pt.shop?.name || "", selectedStores));
+  }, [historyChart, selectedStores]);
+
+  const filteredDeals = deals.filter((d: any) => isStoreAllowed(d.shop?.name || "", selectedStores));
+  const currentBest = filteredDeals?.[0];
+  const currentPrice = currentBest?.price?.amount;
+  
+  const bundleValue = useMemo(() => {
+  if (!bundle.activeBundles.length || currentPrice == null) return null;
+  
+  for (const b of bundle.activeBundles) {
+    let gameTierIndex = -1;
+    b.tiers?.forEach((t: any, i: number) => {
+      if (t.games?.some((gm: any) => gm.id === gameId || gm.name === gameTitle)) {
+        gameTierIndex = i;
+      }
+    });
+    
+    if (gameTierIndex === -1) continue;
+    
+    const tierPrice = b.tiers[gameTierIndex]?.price?.amount;
+    if (!tierPrice) continue;
+    
+if (tierPrice < currentPrice) {
+  return { type: "better", message: "Cheaper in active bundle", tier: b.tiers[gameTierIndex], bundle: b };
+}
+    
+    let totalPrice = 0;
+    let totalGames = 0;
+    for (let i = 0; i <= gameTierIndex; i++) {
+      totalPrice += b.tiers[i]?.price?.amount || 0;
+      totalGames += b.tiers[i]?.games?.length || 0;
+    }
+    
+    const unitPrice = totalGames > 0 ? totalPrice / totalGames : tierPrice;
+    if (unitPrice < currentPrice) {
+      return { type: "value", message: "Bundle may offer more value", tier: b.tiers[gameTierIndex], bundle: b };
     }
   }
+  return null;
+}, [bundle.activeBundles, currentPrice, gameId, gameTitle]);
+  
+  const allTimeLow = historyLow?.price?.amount ?? historyLow?.amount;
+  const hCurrency = historyLow?.price?.currency ?? historyLow?.currency ?? "USD";
 
-  const isExactSteamMatch =
-    steamData &&
-    (steamData.name?.toLowerCase() === gameTitle.toLowerCase() ||
-      steamData.name?.toLowerCase().replace(/[^a-z0-9]/g, "") ===
-        gameTitle.toLowerCase().replace(/[^a-z0-9]/g, ""));
-  const cleanDescription = isExactSteamMatch
-    ? steamData?.short_description?.replace(/<[^>]*>?/gm, "")
-    : "";
-  const coverImage = isExactSteamMatch ? steamData?.header_image : "";
-  const metacriticScore = isExactSteamMatch
-    ? steamData?.metacritic?.score
-    : null;
+  // 🧮 SCORE DOMAIN: Untouched heuristic engine
+  const twelveMonthTime = now - 365 * 24 * 60 * 60 * 1000;
+  const statsPrices = allowedHistory.filter((pt: any) => new Date(pt.timestamp).getTime() >= twelveMonthTime).map((pt: any) => pt.deal.price.amount);
+
+  let typicalMin: number | null = null; let typicalMax: number | null = null; let median: number | null = null; 
+
+  if (statsPrices.length > 0) {
+    const sorted = [...statsPrices].sort((a, b) => a - b);
+    const filtered = sorted.slice(Math.floor(sorted.length * 0.1), Math.floor(sorted.length * 0.9) + 1);
+    if (filtered.length > 0) {
+      typicalMin = Math.min(...filtered); typicalMax = Math.max(...filtered);
+      const mid = Math.floor(filtered.length / 2); median = filtered.length % 2 !== 0 ? filtered[mid] : (filtered[mid - 1] + filtered[mid]) / 2;
+    }
+  }
+  
+const cut = currentBest?.cut || 0;
+let verdict = "";
+let reason: string | undefined;
+let recommendation = "";
+
+const mapUI = (v: string) => {
+  switch (v) {
+    case "Free": return { badge: "free", color: Color.Blue, icon: Icon.Gift };
+    case "Strong deal": return { badge: "best", color: Color.Green, icon: Icon.Star };
+    case "Good deal": return { badge: "good", color: Color.Green, icon: Icon.ThumbsUp };
+    case "Fair price": return { badge: "neutral", color: Color.SecondaryText, icon: Icon.Minus };
+    case "Not great": return { badge: "weak", color: Color.Orange, icon: Icon.Clock };
+    case "Skip":
+    case "Overpriced": return { badge: "bad", color: Color.Red, icon: Icon.XMarkCircle };
+    default: return { badge: "neutral", color: Color.SecondaryText, icon: Icon.Minus };
+  }
+};
+
+if (currentPrice === 0 || cut === 100) {
+  recommendation = "🆓 FREE";
+  verdict = "Free";
+  reason = "Free to claim";
+} else if (bundle.activeCount > 0 && bundleValue?.type === "better") {
+  recommendation = "🔴 SKIP";
+  verdict = "Skip";
+  reason = bundleValue.message;
+} else if (bundle.activeCount > 0 && bundleValue?.type === "value") {
+  recommendation = "🟡 WAIT";
+  verdict = "Not great";
+  reason = bundleValue.message;
+} else if (currentPrice != null) {
+  let score = 0;
+  const safeATL = allTimeLow > 0 ? allTimeLow : currentPrice;
+  const ratioATL = currentPrice / safeATL;
+  
+  if (ratioATL <= 0.95) score += 0.35; 
+  else if (ratioATL <= 1.05) score += 0.25; 
+  else if (ratioATL <= 1.2) score += 0.10;
+  else if (ratioATL >= 2) score -= 0.20;
+
+  if (median != null && median > 0) {
+    const ratioMedian = currentPrice / median;
+    if (ratioMedian <= 0.75) score += 0.25;
+    else if (ratioMedian <= 0.9) score += 0.15;
+    else if (ratioMedian >= 1.25) score -= 0.20;
+  }
+
+  if (cut >= 75 && ratioATL <= 1.2) score += 0.40;
+  else if (cut >= 75) score += 0.30;
+  else if (cut >= 50) score += 0.20;
+  else if (cut >= 25) score += 0.10;
+  else if (cut > 0) score += 0.05;
+
+  score = Math.max(0, Math.min(1, score));
+
+  if (score >= 0.70) recommendation = "🔥 BUY";
+  else if (score >= 0.50) recommendation = "👍 GOOD DEAL";
+  else if (score >= 0.35) recommendation = "🟡 WAIT";
+  else recommendation = "🔴 SKIP";
+
+  const isATL = currentPrice <= safeATL;
+  const isNearATL = currentPrice <= safeATL * 1.05;
+  const isBelowAvg = median && currentPrice < median * 0.85;
+
+  if (score < 0.35) {
+    verdict = cut > 0 ? "Not great" : "Overpriced";
+    reason = cut > 0 ? "Sale price above its usual" : "Above its typical price";
+  } else if (score < 0.50) {
+    verdict = "Not great";
+    if (bundle.recentBundles.length >= 4) reason = "Often bundled, wait";
+    else if (cut >= 70) reason = "Mega sale, but not lowest";
+    else reason = cut > 0 ? "Weak sale, better to wait" : "No discount, wait for sale";
+  } else {
+    if (isATL) {
+      verdict = score >= 0.70 ? "Strong deal" : "Good deal";
+      reason = cut > 0 ? "Hits all-time low price" : "Lowest base price drop";
+    } else if (isNearATL) {
+      verdict = "Good deal";
+      reason = "Close to historical low";
+    } else if (cut >= 75) {
+      verdict = "Good deal";
+      reason = "Massive discount percentage";
+    } else if (isBelowAvg) {
+      verdict = "Good deal";
+      reason = "Well below its usual price";
+    } else {
+      verdict = "Fair price";
+      reason = "Decent price, but not lowest";
+    }
+  }
+}
+
+if (!reason) {
+  reason = "Typical pricing";
+}
+
+const ui = mapUI(verdict);
+
+  const plotData: any[] = [];
+  const cutoffTime = now - (range === "3m" ? 90 : range === "6m" ? 180 : 365) * 24 * 60 * 60 * 1000;
+  if (allowedHistory.length > 0) {
+    allowedHistory.filter((pt: any) => new Date(pt.timestamp).getTime() >= cutoffTime).reverse().forEach((pt: any) => {
+      plotData.push({ x: new Date(pt.timestamp).toISOString().split("T")[0], y: pt.deal.price.amount });
+    });
+  }
+
+  let chartUrl = "";
+  if (SHOW_CHART && plotData.length > 0) {
+    const minY = Math.min(...plotData.map(p => p.y));
+    const datasets: any[] = [{ data: plotData, borderColor: '#2ecc71', backgroundColor: 'rgba(46, 204, 113, 0.05)', steppedLine: true, fill: true, pointRadius: plotData.map(p => Math.abs(p.y - minY) < 0.01 ? 4 : 0), pointBackgroundColor: plotData.map(p => Math.abs(p.y - minY) < 0.01 ? '#e74c3c' : 'transparent'), pointBorderColor: plotData.map(p => Math.abs(p.y - minY) < 0.01 ? '#ffffff' : 'transparent'), pointBorderWidth: 2, borderWidth: 2 }];
+    
+    if (median !== null) {
+      datasets.push({ data: plotData.map(p => ({ x: p.x, y: median })), borderColor: 'rgba(255, 255, 255, 0.2)', borderWidth: 1, borderDash: [5, 5], fill: false, pointRadius: 0 });
+    }
+
+    const config: any = { 
+      type: 'line', 
+      data: { datasets }, 
+      options: { 
+        layout: { padding: { right: 30, left: 5, top: 10, bottom: 5 } }, 
+        legend: { display: false }, 
+        scales: { 
+          xAxes: [{ type: 'time', time: { parser: 'YYYY-MM-DD', unit: 'month', displayFormats: { month: 'MMM YY' } }, gridLines: { color: 'rgba(255, 255, 255, 0.1)' }, ticks: { maxRotation: 0, maxTicksLimit: 6, fontSize: 8 } }], 
+          yAxes: [{ gridLines: { color: 'rgba(255, 255, 255, 0.1)' }, ticks: { beginAtZero: true, fontSize: 8 } }] 
+        }
+      } 
+    };
+    chartUrl = `https://quickchart.io/chart?c=${encodeURIComponent(JSON.stringify(config))}&w=250&h=110&devicePixelRatio=2&bkg=transparent`;
+  }
+
+  const isDiscounted = currentBest && currentBest.cut > 0;
+  let saleTagText = "";
+  if (isDiscounted) {
+    if (currentBest.cut >= 70) saleTagText = "MEGA SALE";
+    else if (currentBest.cut >= 40) saleTagText = "ON SALE";
+    else saleTagText = "DISCOUNT";
+  }
+
+  const heroSection = currentBest && currentPrice != null ? `<h2 align="center">${recommendation || "Price Details"}</h2>\n<h3 align="center">${formatPrice(currentPrice, currentBest.price?.currency)} ${isDiscounted ? `<code>-${currentBest.cut}%</code>` : ""} · ${currentBest.shop?.name}</h3>\n\n---\n\n` : "";
 
   const markdown = `
-${coverImage ? `![](${coverImage})\n` : ""}
-# ${gameTitle}
+${steamData?.header_image ? `<img src="${steamData.header_image}" width="260" />\n\n` : ""}
+# ${gameTitle}  
+${steamData?.genres ? `*${steamData.genres.map((g: any) => g.description).slice(0, 2).join(", ")}*${steamData?.release_date?.date ? ` · ${new Date(steamData.release_date.date).getFullYear()}` : ""}` : ""}
 
-${cleanDescription ? `*${cleanDescription}*\n` : ""}
+${steamData?.short_description ? `> ${steamData.short_description.replace(/<[^>]*>?/gm, "").split('. ')[0]}.` : ""}
 
-Current prices in **${COUNTRY}**:
+${heroSection}
+💰 **Prices in ${COUNTRY}**
 
-| Shop | Current | Regular | Cut |
+| Store | Price | RRP | Discount |
 | :--- | :--- | :--- | :--- |
-${
-  deals?.length
-    ? deals
-        .map(
-          (p: any) =>
-            `| ${p.url ? `[${p.shop?.name || "-"}](${p.url})` : p.shop?.name || "-"} | **${p.price?.amount || "-"} ${p.price?.currency || ""}** | ${p.regular?.amount || "-"} | -${p.cut || 0}% |`,
-        )
-        .join("\n")
-    : "| No active store data | - | - | - |"
-}
+${filteredDeals?.length ? filteredDeals.map((p: any) => `| ${p.url ? `[${p.shop?.name}](${p.url})` : p.shop?.name} | **${formatPrice(p.price?.amount, p.price?.currency)}** | ${formatPrice(p.regular?.amount, p.price?.currency)} | ${p.cut > 0 ? "-" + p.cut + "%" : "-"} |`).join("\n") : "| No data found | - | - | - |"}
+
+${chartUrl ? `\n---\n\n📈 **Trend: ${range === "1y" ? "12 Months" : range === "6m" ? "6 Months" : "3 Months"}**\n\n![Price History](${chartUrl})\n` : ""}
 `;
 
   return (
-    <Detail
-      isLoading={isLoading}
-      markdown={markdown}
-      navigationTitle={gameTitle}
+    <Detail isLoading={isLoading} markdown={markdown} navigationTitle={gameTitle}
       metadata={
         <Detail.Metadata>
-          {(deals?.[0]?.cut > 0 || activeBundlesCount > 0) && (
-            <Detail.Metadata.TagList title="">
-              {deals?.[0]?.cut > 0 && (
-                <Detail.Metadata.TagList.Item
-                  text="ON SALE"
-                  color={Color.Green}
-                />
-              )}
-              {activeBundlesCount > 0 && (
-                <Detail.Metadata.TagList.Item
-                  text="IN BUNDLE"
-                  color={Color.Purple}
-                />
-              )}
-            </Detail.Metadata.TagList>
-          )}
-          <Detail.Metadata.Label title="Type" text={gameType.toUpperCase()} />
-          <Detail.Metadata.Separator />
-          <Detail.Metadata.Label title="Region" text={COUNTRY} />
-          <Detail.Metadata.Separator />
-          <Detail.Metadata.Label
-            title="All-Time Low"
-            text={hAmount ? `${hAmount} ${hCurrency}` : "No History"}
-            icon={
-              hAmount
-                ? { source: Icon.Checkmark, tintColor: Color.Green }
-                : Icon.XMarkCircle
-            }
-          />
-          <Detail.Metadata.Label
-            title="Shop"
-            text={historyLow?.shop?.name || "Unknown"}
-          />
-          <Detail.Metadata.Label title="Recorded Date" text={hDate} />
-          <Detail.Metadata.Separator />
-          <Detail.Metadata.Label
-            title="Bundles"
-            text={`${activeBundlesCount} live of ${totalBundles} total`}
-          />
-          {activeBundlesCount > 0 && bundleSiteNames && (
-            <Detail.Metadata.Label
-              title="Active Bundle Site"
-              text={bundleSiteNames}
-            />
-          )}
-          {metacriticScore && (
+{recommendation && <Detail.Metadata.Label title="Recommendation" text={recommendation} />}
+{verdict && !recommendation.includes("WAIT") && !recommendation.includes("SKIP") && (
+  <Detail.Metadata.Label 
+    title="Verdict" 
+    text={verdict} 
+    icon={{ source: mapUI(verdict).icon, tintColor: mapUI(verdict).color }} 
+  />
+)}
+{reason && (
+  <Detail.Metadata.Label 
+    title="Why" 
+    text={reason.length > 28 ? reason.slice(0, 28) : reason} 
+  />
+)}
+          {(isDiscounted || bundle.activeCount > 0) && (
             <>
               <Detail.Metadata.Separator />
-              <Detail.Metadata.Label
-                title="Metacritic"
-                text={String(metacriticScore)}
-              />
+              <Detail.Metadata.TagList title="Tags">
+                {isDiscounted && <Detail.Metadata.TagList.Item text={saleTagText} color={Color.Green} />}
+                {bundle.activeCount > 0 && <Detail.Metadata.TagList.Item text="IN BUNDLE" color={Color.Purple} />}
+              </Detail.Metadata.TagList>
             </>
           )}
-          {gameSlug && (
-            <>
-              <Detail.Metadata.Separator />
-              <Detail.Metadata.Link
-                title=""
-                target={`https://isthereanydeal.com/game/${gameSlug}/info/`}
-                text="View on IsThereAnyDeal"
-              />
-            </>
-          )}
+          <Detail.Metadata.Separator />
+          <Detail.Metadata.Label title="All-Time Low" text={allTimeLow != null ? formatPrice(allTimeLow, hCurrency) : "No History"} icon={allTimeLow != null ? { source: Icon.Checkmark, tintColor: Color.Green } : Icon.XMarkCircle} />
+          {typicalMin !== null && typicalMax !== null && typicalMin !== typicalMax && <Detail.Metadata.Label title="Typical Price" text={`${formatPrice(typicalMin, hCurrency)} - ${formatPrice(typicalMax, hCurrency)}`} />}
+          {median !== null && <Detail.Metadata.Label title="Median Price" text={formatPrice(median, hCurrency)} />}
+          
+{bundle.state && (
+  <>
+    <Detail.Metadata.Separator />
+    <Detail.Metadata.Label
+      title="Bundle Status"
+      text={bundle.state}
+      icon={{ source: bundle.icon!, tintColor: bundle.color! }}
+    />
+  </>
+)}
+{bundleValue?.tier && bundleValue?.bundle && (
+  <Detail.Metadata.Link 
+    title="Bundle Tier"
+    target={bundleValue.bundle.url || bundleValue.bundle.details || ""}
+    text={bundleValue.tier.price ? `${bundleValue.bundle.page?.name || "Bundle"} · ${formatPrice(bundleValue.tier.price.amount, bundleValue.tier.price.currency || hCurrency)}` : (bundleValue.bundle.page?.name || "View Bundle")}
+  />
+)}
+          
+<Detail.Metadata.Separator />
+<Detail.Metadata.Label 
+  title="Price Sources" 
+  text={selectedStores.length === 0 || selectedStores.length >= 23 ? "All Stores" : `${selectedStores.length} Selected`} 
+/>
+          <Detail.Metadata.Label title="Content Type" text={gameType.toUpperCase()} />
+          <Detail.Metadata.Label title="Store Region" text={COUNTRY.toUpperCase()} icon={`https://flagcdn.com/24x18/${COUNTRY.toLowerCase()}.png`} />
+          
+          <Detail.Metadata.Separator />
+          {gameSlug && <Detail.Metadata.Link title="" target={`https://isthereanydeal.com/game/${gameSlug}/info/`} text="View on IsThereAnyDeal" />}
+          {steamData?.steam_appid && <Detail.Metadata.Link title="" target={`https://store.steampowered.com/app/${steamData.steam_appid}`} text="View on Steam" />}
+          {lastChecked && <><Detail.Metadata.Separator /><Detail.Metadata.Label title="Data" text={`Cached · ${Math.floor((Date.now() - lastChecked) / 60000)} min ago`} /></>}
         </Detail.Metadata>
       }
       actions={
         <ActionPanel>
           <ActionPanel.Section>
-            {deals?.[0]?.url && (
-              <Action.OpenInBrowser
-                url={deals[0].url}
-                title={`Open Best Deal (${deals[0].shop?.name})`}
-                icon={Icon.Cart}
-              />
-            )}
-            <Action
-              title="Remove from Saved"
-              onAction={removeGame}
-              icon={Icon.Trash}
-              shortcut={{
-                Windows: { modifiers: ["ctrl"], key: "s" },
-                macOS: { modifiers: ["cmd"], key: "s" },
-              }}
-              style={Action.Style.Destructive}
+            {currentBest?.url && <Action.OpenInBrowser url={currentBest.url} title={`Open Best Deal (${currentBest.shop?.name})`} icon={Icon.Cart} />}
+            <Action.CopyToClipboard title="Copy Game Name" content={gameTitle} shortcut={{ Windows: { modifiers: ["ctrl", "shift"], key: "c" }, macOS: { modifiers: ["cmd", "shift"], key: "c" } }} />
+            {currentBest?.url && <Action.CopyToClipboard title="Copy Best Deal Link" content={currentBest.url} shortcut={{ Windows: { modifiers: ["ctrl"], key: "c" }, macOS: { modifiers: ["cmd"], key: "c" } }} />}
+            <ActionPanel.Submenu title="Change Chart Range" icon={Icon.BarChart}>
+              <Action title="3 Months" onAction={() => handleSetRange("3m")} icon={range === "3m" ? Icon.Checkmark : Icon.Circle} />
+              <Action title="6 Months" onAction={() => handleSetRange("6m")} icon={range === "6m" ? Icon.Checkmark : Icon.Circle} />
+              <Action title="1 Year" onAction={() => handleSetRange("1y")} icon={range === "1y" ? Icon.Checkmark : Icon.Circle} />
+            </ActionPanel.Submenu>
+            <Action 
+              title="Refresh Data" 
+              icon={Icon.ArrowClockwise} 
+              shortcut={{ Windows: { modifiers: ["ctrl"], key: "r" }, macOS: { modifiers: ["cmd"], key: "r" } }}
+              onAction={() => {
+                const c = new Cache();
+                c.remove(`search_detail_${gameId}_${COUNTRY}_v1`);
+                setIsLoading(true);
+                setRefreshKey(k => k + 1);
+              }} 
             />
-            {gameSlug && (
-              <Action.OpenInBrowser
-                url={`https://isthereanydeal.com/game/${gameSlug}/info/`}
-                title="View on Isthereanydeal"
-                icon={Icon.Globe}
-                shortcut={{
-                  Windows: { modifiers: ["ctrl"], key: "o" },
-                  macOS: { modifiers: ["cmd"], key: "o" },
-                }}
-              />
-            )}
+            {realBundles.length > 0 && <Action.Push title="View Bundle Contents" target={<BundleContentViewer bundles={realBundles} gameTitle={gameTitle} />} icon={Icon.Box} shortcut={{ Windows: { modifiers: ["ctrl"], key: "b" }, macOS: { modifiers: ["cmd"], key: "b" } }} />}
+			{removeGame && <Action title="Remove from Saved" onAction={removeGame} icon={Icon.Trash} shortcut={{ Windows: { modifiers: ["ctrl"], key: "s" }, macOS: { modifiers: ["cmd"], key: "s" } }} style={Action.Style.Destructive} />}
           </ActionPanel.Section>
         </ActionPanel>
+      }
+    />
+  );
+}
+
+function BundleContentViewer({ bundles, gameTitle }: any) {
+  const firstBundleUrl = bundles?.[0]?.url || bundles?.[0]?.details;
+  
+  let markdown = `# 📦 Bundle Contents for ${gameTitle}\n\n`;
+  bundles.forEach((b: any, i: number) => {
+    const active = b.expiry ? new Date(b.expiry) > new Date() : true;
+    markdown += `## ${active ? "✅" : "❌"} ${b.title || `Bundle ${i + 1}`}\n**Page:** ${b.page?.name || "Unknown"}${b.expiry ? ` | **Expires:** ${new Date(b.expiry).toLocaleDateString("en-GB")}` : ""}\n${b.note ? `\n> ${b.note}` : ""}\n\n`;
+    b.tiers?.forEach((t: any, ti: number) => {
+      markdown += `### ${t.name || `Tier ${ti + 1}`} - **${t.price ? formatPrice(t.price.amount, t.price.currency) : "N/A"}**\n`;
+      t.games?.forEach((g: any) => (markdown += `- ${g.title || g.name || g}\n`));
+      markdown += `\n`;
+    });
+  });
+  return (
+    <Detail 
+      markdown={markdown} 
+      navigationTitle="Bundle Contents"
+      actions={
+        firstBundleUrl ? (
+          <ActionPanel>
+            <Action.OpenInBrowser title="Open Bundle Page" url={firstBundleUrl} icon={Icon.Globe} />
+            <Action.CopyToClipboard title="Copy Bundle Link" content={firstBundleUrl} />
+          </ActionPanel>
+        ) : undefined
       }
     />
   );
