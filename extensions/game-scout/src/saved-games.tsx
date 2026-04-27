@@ -1,3 +1,5 @@
+// TODO: Add 24h timestamp to referencePrices for time-based price change tags
+
 import { useEffect, useState, useMemo } from "react";
 import {
   List,
@@ -770,7 +772,7 @@ function GameDetail({
       if (unitPrice < currentPrice) {
         return {
           type: "value",
-          message: "Bundle may offer more value",
+          message: "Better value in bundle",
           tier: b.tiers[gameTierIndex],
           bundle: b,
         };
@@ -830,8 +832,8 @@ function GameDetail({
           icon: Icon.Minus,
         };
       case "Not great":
+      case "Not ideal":
         return { badge: "weak", color: Color.Orange, icon: Icon.Clock };
-      case "Skip":
       case "Overpriced":
         return { badge: "bad", color: Color.Red, icon: Icon.XMarkCircle };
       default:
@@ -849,15 +851,16 @@ function GameDetail({
     reason = "Free to claim";
   } else if (bundle.activeCount > 0 && bundleValue?.type === "better") {
     recommendation = "🔴 SKIP";
-    verdict = "Skip";
+    verdict = "Overpriced";
     reason = bundleValue.message;
   } else if (bundle.activeCount > 0 && bundleValue?.type === "value") {
     recommendation = "🟡 WAIT";
-    verdict = "Not great";
+    verdict = "Not ideal";
     reason = bundleValue.message;
   } else if (currentPrice != null) {
     let score = 0;
-    const safeATL = allTimeLow > 0 ? allTimeLow : currentPrice;
+    const safeATL =
+      allTimeLow && allTimeLow > 0 ? allTimeLow : currentPrice || 1;
     const ratioATL = currentPrice / safeATL;
 
     if (ratioATL <= 0.95) score += 0.35;
@@ -888,34 +891,40 @@ function GameDetail({
     const isATL = currentPrice <= safeATL;
     const isNearATL = currentPrice <= safeATL * 1.05;
     const isBelowAvg = median && currentPrice < median * 0.85;
+    const isAtTypical = median && currentPrice <= median * 1.05;
 
     if (score < 0.35) {
-      verdict = cut > 0 ? "Not great" : "Overpriced";
-      reason =
-        cut > 0 ? "Sale price above its usual" : "Above its typical price";
-    } else if (score < 0.5) {
-      verdict = "Not great";
-      if (bundle.recentBundles.length >= 4) reason = "Often bundled, wait";
-      else if (cut >= 70) reason = "Mega sale, but not lowest";
-      else
+      if (cut === 0 && (!median || isAtTypical)) {
+        verdict = "Fair price";
+        reason = "Typical price for this game";
+        recommendation = "🟡 WAIT";
+      } else {
+        verdict = cut > 0 ? "Not ideal" : "Overpriced";
         reason =
-          cut > 0 ? "Weak sale, better to wait" : "No discount, wait for sale";
+          cut > 0 ? "Discounted, but still high" : "Above usual price range";
+      }
+    } else if (score < 0.5) {
+      verdict = "Not ideal";
+      if (bundle.recentBundles.length >= 4) reason = "Frequently bundled, wait";
+      else if (cut >= 70) reason = "Big discount, not lowest";
+      else
+        reason = cut > 0 ? "Small discount, better wait" : "No discount, wait";
     } else {
       if (isATL) {
         verdict = score >= 0.7 ? "Strong deal" : "Good deal";
-        reason = cut > 0 ? "Hits all-time low price" : "Lowest base price drop";
+        reason = cut > 0 ? "At all-time low price" : "Lowest recorded price";
       } else if (isNearATL) {
         verdict = "Good deal";
-        reason = "Close to historical low";
+        reason = "Near all-time low price";
       } else if (cut >= 75) {
         verdict = "Good deal";
-        reason = "Massive discount percentage";
+        reason = "Large discount applied";
       } else if (isBelowAvg) {
         verdict = "Good deal";
-        reason = "Well below its usual price";
+        reason = "Well below usual price";
       } else {
         verdict = "Fair price";
-        reason = "Decent price, but not lowest";
+        reason = "Decent price, not the lowest";
       }
     }
   }
@@ -1018,7 +1027,7 @@ function GameDetail({
       : "";
 
   const markdown = `
-${steamData?.header_image ? `<img src="${steamData.header_image}" width="260" />\n\n` : ""}
+${steamData?.header_image ? `<img src="${steamData.header_image}" width="280" />\n\n` : ""}
 # ${gameTitle}  
 ${
   steamData?.genres
@@ -1057,8 +1066,7 @@ ${chartUrl ? `\n---\n\n📈 **Trend: ${range === "1y" ? "12 Months" : range === 
             />
           )}
           {verdict &&
-            !recommendation.includes("WAIT") &&
-            !recommendation.includes("SKIP") && (
+            ["🔥 BUY", "👍 GOOD DEAL", "🆓 FREE"].includes(recommendation) && (
               <Detail.Metadata.Label
                 title="Verdict"
                 text={verdict}
@@ -1071,7 +1079,7 @@ ${chartUrl ? `\n---\n\n📈 **Trend: ${range === "1y" ? "12 Months" : range === 
           {reason && (
             <Detail.Metadata.Label
               title="Why"
-              text={reason.length > 28 ? reason.slice(0, 28) : reason}
+              text={reason.length > 28 ? reason.slice(0, 25) + "..." : reason}
             />
           )}
           {(isDiscounted || bundle.activeCount > 0) && (
