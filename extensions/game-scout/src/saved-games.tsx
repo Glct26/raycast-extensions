@@ -24,7 +24,7 @@ const CACHE_KEY = `itad_saved_prices_v1_${COUNTRY}`;
 const CACHE_TTL =
   parseInt(preferences.refreshFrequency || "12") * 60 * 60 * 1000;
 const DETAIL_CACHE_TTL = 6 * 60 * 60 * 1000;
-const RECENT_BUNDLE_WINDOW = 2 * 365 * 24 * 60 * 60 * 1000;
+const RECENT_BUNDLE_WINDOW = 6 * 30 * 24 * 60 * 60 * 1000;
 
 import { formatPrice, isStoreAllowed } from "./utils";
 
@@ -172,6 +172,10 @@ export default function SavedGames() {
   const prices = useMemo(() => {
     const map: any = {};
     Object.keys(rawPrices).forEach((id) => {
+      if (!rawPrices[id] || !Array.isArray(rawPrices[id])) {
+        map[id] = null;
+        return;
+      }
       map[id] =
         rawPrices[id].filter((d: any) =>
           isStoreAllowed(d.shop?.name || "", selectedStores),
@@ -214,6 +218,7 @@ export default function SavedGames() {
     const newList = savedGames.filter((g) => g.id !== id);
     setSavedGames(newList);
     await LocalStorage.setItem("saved_itad_games", JSON.stringify(newList));
+    cache.remove(CACHE_KEY);
   };
 
   const majorDrops = savedGames.filter((game) => {
@@ -433,6 +438,7 @@ export default function SavedGames() {
                               "saved_itad_games",
                               JSON.stringify([]),
                             );
+                            cache.remove(CACHE_KEY);
                           }}
                           icon={Icon.Trash}
                           style={Action.Style.Destructive}

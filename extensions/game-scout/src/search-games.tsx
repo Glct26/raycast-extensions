@@ -21,7 +21,7 @@ const MAX_RESULTS = parseInt(preferences.maxResults) || 25;
 
 const detailCache = new Cache({ namespace: "search_detail" });
 const DETAIL_CACHE_TTL = 6 * 60 * 60 * 1000;
-const RECENT_BUNDLE_WINDOW = 2 * 365 * 24 * 60 * 60 * 1000;
+const RECENT_BUNDLE_WINDOW = 6 * 30 * 24 * 60 * 60 * 1000;
 
 import { formatPrice, isStoreAllowed } from "./utils";
 
@@ -79,10 +79,14 @@ export default function Command() {
           type: game.type || "OTHER",
         },
       ];
-      detailCache.remove("itad_saved_prices_v2_" + COUNTRY);
+
+      const savedCache = new Cache();
+      savedCache.remove(`itad_saved_prices_v1_${COUNTRY}`);
     }
     setSavedGames(newList);
     await LocalStorage.setItem("saved_itad_games", JSON.stringify(newList));
+
+    detailCache.remove("itad_saved_prices_v1_" + COUNTRY);
   };
 
   useEffect(() => {
@@ -230,7 +234,9 @@ export default function Command() {
         />
       ) : (
         filteredData.slice(0, MAX_RESULTS).map((game: any) => {
-          const overview = priceData?.find((p: any) => p.id === game.id);
+          const overview = Array.isArray(priceData)
+            ? priceData.find((p: any) => p.id === game.id)
+            : undefined;
           const deal = overview?.current || overview;
           const isSaved = savedGames.some((g) => g.id === game.id);
 
