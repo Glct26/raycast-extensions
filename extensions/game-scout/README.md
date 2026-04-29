@@ -1,4 +1,4 @@
-# Game Deals & Tracker
+# Game Scout
 
 The ultimate gaming companion for Raycast. Search across multiple storefronts, track historical lows, discover free giveaways, and catch the best daily deals without leaving your launcher.
 
@@ -49,12 +49,17 @@ To use the **Search** and **Saved Games** features, a free API key from IsThereA
 * **Cmd+B / Ctrl+B** — View bundle contents (if active bundles exist).
 * **Cmd+R / Ctrl+R** — Force refresh price and chart data for the current game.
 
+### Game Detail View (Search & Saved Games)
+* **Cmd+C / Ctrl+C** — Copy best deal link.
+* **Cmd+Shift+C / Ctrl+Shift+C** — Copy game name.
+
 ### Saved Games Specific
 * **Cmd+Shift+Backspace / Ctrl+Shift+Backspace** — Clear all saved games.
 
 ### Top Deals
 * **Cmd+M / Ctrl+M** — View Metacritic reviews (if available).
 * **Cmd+Shift+C / Ctrl+Shift+C** — Copy deal link.
+* **Cmd+Alt+Shift+C / Ctrl+Alt+Shift+C** — Copy Metacritic link (if available).
 
 ### Free Games
 * **Cmd+I / Ctrl+I** — Ignore / Restore giveaway (hides from the main list).
@@ -67,3 +72,9 @@ To use the **Search** and **Saved Games** features, a free API key from IsThereA
 
 * **Getting "No Results" or "Invalid API Key" toast?** Double-check that you copied the **API Key** (from the right column) and not the OAuth Client ID from your IsThereAnyDeal app dashboard.
 * **Hitting API Rate Limits?** If you check hundreds of games daily, try turning off the `Show Price History Chart` setting in the extension preferences to save 1 API call per game lookup.
+
+## Support
+
+If this extension helps you find great deals, consider buying me a coffee!
+
+<a href="https://buymeacoffee.com/glct26" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="41" width="174"></a>
