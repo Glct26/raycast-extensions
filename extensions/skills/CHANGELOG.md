@@ -1,4 +1,28 @@
-# Changelog
+# Skills Changelog
+
+## [Add bunx support] - 2026-04-28
+
+- Added initial support for `bunx`, it is only called optimally if `npx` is not found
+
+## [Add Skills CLI Telemetry Opt-Out] - 2026-04-28
+
+- Add an extension preference to opt out of anonymous usage telemetry collected by the underlying Skills CLI when commands are run from Raycast
+- Pass `DISABLE_TELEMETRY=1` to all Skills CLI invocations when the preference is enabled
+- Trim the optional GitHub token preference before using it for repository stats and update checks
+
+## [Fix Homebrew `node@` Resolution and add Custom `npx` Validation] - 2026-04-23
+
+- Detect versioned Homebrew Node formula bins like `/opt/homebrew/opt/node@24/bin` so the Skills CLI can find `node` when `npx` comes from Homebrew, while still preferring Node installs from version managers first
+- Validate the optional "Custom npx Path" override before running the CLI and show a clearer error detail when the configured path is incorrect
+
+## [Fix Silent Auto-Update on Load] - 2026-04-21
+
+- Stop silently auto-updating outdated skills when opening Manage Skills
+- Fix the orange "Update available" highlight that stopped appearing for outdated skills
+
+## [Show Installed Badge in Search Results] - 2026-04-20
+
+- Show a green "Installed" tag on search results for skills that are already installed locally
 
 ## [Update Individual Skills] - 2026-04-17
 
