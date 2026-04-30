@@ -14,16 +14,36 @@ import {
   Image,
 } from "@raycast/api";
 
-const preferences = getPreferenceValues();
+const preferences = getPreferenceValues<{
+  itadApiKey: string;
+  country: string;
+  maxResults: string;
+  showMature: boolean;
+  showDLCGameSearch: boolean;
+  showPriceHistoryChart: boolean;
+}>();
+
 const API_KEY = (preferences.itadApiKey || "").trim();
 const COUNTRY = preferences.country;
 const MAX_RESULTS = parseInt(preferences.maxResults) || 25;
 
 const detailCache = new Cache({ namespace: "search_detail" });
 const DETAIL_CACHE_TTL = 6 * 60 * 60 * 1000;
-const RECENT_BUNDLE_WINDOW = 6 * 30 * 24 * 60 * 60 * 1000;
+const RECENT_BUNDLE_WINDOW = 2 * 365 * 24 * 60 * 60 * 1000;
 
 import { formatPrice, isStoreAllowed } from "./utils";
+
+const cleanBundleUrl = (url?: string) => {
+  if (!url) return "";
+  if (url.includes("u=http")) {
+    try {
+      return decodeURIComponent(url.split("u=")[1].split("&")[0]);
+    } catch {
+      return url;
+    }
+  }
+  return url;
+};
 
 export default function Command() {
   const [apiError, setApiError] = useState(false);
@@ -85,8 +105,6 @@ export default function Command() {
     }
     setSavedGames(newList);
     await LocalStorage.setItem("saved_itad_games", JSON.stringify(newList));
-
-    detailCache.remove("itad_saved_prices_v1_" + COUNTRY);
   };
 
   useEffect(() => {
@@ -243,9 +261,8 @@ export default function Command() {
           const accessories = [];
           if (game.mature)
             accessories.push({
-              icon: Icon.Exclamationmark,
-              tooltip: "Mature Content 18+",
-              tintColor: Color.Red,
+              tag: { value: "18+", color: Color.Red },
+              tooltip: "Mature Content",
             });
 
           if (priceLoading && !deal) {
@@ -571,6 +588,24 @@ function GameDetail({
           ? overview.bundles
           : overview?.bundles?.count || overview?.bundles?.length || 0;
 
+    const allBundlesForTs = Array.isArray(overview?.bundles)
+      ? overview.bundles
+      : realBundles;
+
+    const timestamps = allBundlesForTs
+      .map((b: any) => {
+        const ts = b.created ?? b.timestamp ?? b.publish ?? b.expiry;
+        return ts ? new Date(ts).getTime() : null;
+      })
+      .filter((t: any) => t !== null && !isNaN(t));
+
+    const lastBundleTs =
+      timestamps.length > 0 ? Math.max(...timestamps) : undefined;
+    const lastBundleDate = lastBundleTs ? new Date(lastBundleTs) : null;
+    const lastBundleAgo = lastBundleTs ? now - lastBundleTs : Infinity;
+
+    const ONE_YEAR = 365 * 24 * 60 * 60 * 1000;
+
     let state: string | null = null;
     let icon: Image.ImageLike | undefined = undefined;
     let color: Color | undefined = undefined;
@@ -579,13 +614,31 @@ function GameDetail({
       state = "Active";
       icon = Icon.Box;
       color = Color.Purple;
-    } else if (recentBundles.length >= 4) {
+    } else if (totalBundles === 0) {
+      state = "Never Bundled";
+      icon = Icon.XMarkCircle;
+      color = Color.SecondaryText;
+    } else if (recentBundles.length >= 4 && lastBundleAgo < ONE_YEAR) {
       state = "Frequent";
       icon = Icon.Repeat;
       color = Color.Orange;
-    } else if (totalBundles >= 2) {
+    } else if (totalBundles >= 2 && lastBundleAgo < ONE_YEAR) {
       state = "Occasional";
       icon = Icon.Circle;
+      color = Color.SecondaryText;
+    } else if (totalBundles === 1 && lastBundleAgo < ONE_YEAR) {
+      state = "Bundled recently";
+      icon = Icon.Circle;
+      color = Color.SecondaryText;
+    } else if (lastBundleDate) {
+      const month = lastBundleDate.toLocaleString("en-US", { month: "short" });
+      const year = lastBundleDate.getFullYear();
+      state = `Last bundled ${month} ${year}`;
+      icon = Icon.Clock;
+      color = Color.SecondaryText;
+    } else if (totalBundles > 0) {
+      state = `Bundled ${totalBundles} times`;
+      icon = Icon.Clock;
       color = Color.SecondaryText;
     }
 
@@ -677,14 +730,6 @@ function GameDetail({
       if (gameTierIndex === -1) continue;
 
       const tierPrice = b.tiers[gameTierIndex]?.price?.amount;
-      console.log(
-        "gameTierIndex:",
-        gameTierIndex,
-        "tierPrice:",
-        tierPrice,
-        "currentPrice:",
-        currentPrice,
-      );
       if (!tierPrice) continue;
 
       if (tierPrice < currentPrice) {
@@ -696,14 +741,12 @@ function GameDetail({
         };
       }
 
-      let totalPrice = 0;
       let totalGames = 0;
       for (let i = 0; i <= gameTierIndex; i++) {
-        totalPrice += b.tiers[i]?.price?.amount || 0;
         totalGames += b.tiers[i]?.games?.length || 0;
       }
 
-      const unitPrice = totalGames > 0 ? totalPrice / totalGames : tierPrice;
+      const unitPrice = totalGames > 0 ? tierPrice / totalGames : tierPrice;
       if (unitPrice < currentPrice) {
         return {
           type: "value",
@@ -841,7 +884,7 @@ function GameDetail({
       }
     } else if (score < 0.5) {
       verdict = "Not ideal";
-      if (bundle.recentBundles.length >= 4) reason = "Frequently bundled, wait";
+      if (bundle.state === "Frequent") reason = "Frequently bundled, wait";
       else if (cut >= 70) reason = "Big discount, not lowest";
       else
         reason = cut > 0 ? "Small discount, better wait" : "No discount, wait";
@@ -1102,9 +1145,9 @@ ${chartUrl ? `\n---\n\n📈 **Trend: ${range === "1y" ? "12 Months" : range === 
           {bundleValue?.tier && bundleValue?.bundle && (
             <Detail.Metadata.Link
               title="Bundle Tier"
-              target={
-                bundleValue.bundle.url || bundleValue.bundle.details || ""
-              }
+              target={cleanBundleUrl(
+                bundleValue.bundle.url || bundleValue.bundle.details,
+              )}
               text={
                 bundleValue.tier.price
                   ? `${bundleValue.bundle.page?.name || "Bundle"} · ${formatPrice(bundleValue.tier.price.amount, bundleValue.tier.price.currency || hCurrency)}`
@@ -1270,7 +1313,9 @@ ${chartUrl ? `\n---\n\n📈 **Trend: ${range === "1y" ? "12 Months" : range === 
 }
 
 function BundleContentViewer({ bundles, gameTitle }: any) {
-  const firstBundleUrl = bundles?.[0]?.url || bundles?.[0]?.details;
+  const firstBundleUrl = cleanBundleUrl(
+    bundles?.[0]?.url || bundles?.[0]?.details,
+  );
 
   let markdown = `# 📦 Bundle Contents for ${gameTitle}\n\n`;
   bundles.forEach((b: any, i: number) => {
